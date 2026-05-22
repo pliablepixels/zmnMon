@@ -33,6 +33,9 @@
     background: #1f2937; color: #8b949e; border: 1px solid #30363d; }
   #alert.warn { background: #341a00; color: #ffa657; border-color: #bb8009; }
   #alert.crit { background: #3d0d11; color: #ff7b72; border-color: #da3633; }
+  #export { text-decoration: none; padding: 4px 12px; border-radius: 6px; font-weight: 600;
+    font-size: 12px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+  #export:hover { background: #30363d; border-color: #8b949e; }
 
   /* Connections sidebar: full height of the layout row, scrolls internally. */
   #conn-col { flex: none; width: 440px; display: flex; flex-direction: column;
@@ -116,6 +119,7 @@
   <span id="live"><span class="dot"></span><span id="live-text">connecting&hellip;</span></span>
   <span class="meta" id="meta">connecting&hellip;</span>
   <span id="alert">CLOSE_WAIT: &mdash;</span>
+  <a id="export" href="/api/export" download title="Download a Markdown report (digest + raw data) for Claude analysis">Export</a>
 </header>
 <div class="layout">
   <aside id="conn-col">

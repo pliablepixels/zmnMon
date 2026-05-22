@@ -60,6 +60,22 @@ To capture which HTTP URL each socket is hitting (plaintext HTTP only), run as r
 sudo python3 zmnmon.py --zm-host 192.168.183.250 --sniff
 ```
 
+## Exporting for analysis
+
+Click **Export** in the dashboard header (or fetch `GET /api/export`) to download
+a single self-contained Markdown file covering the run so far (up to `--history`).
+It is meant to be handed straight to Claude for leak analysis. The file contains:
+
+- a **digest** — per TCP state and per process, the first → last / min / max /
+  delta and a growing-vs-stable trend, cumulative connection churn, and a
+  "leak indicators" list calling out anything that grew steadily;
+- the **raw** lite-sample time series plus the latest full connection list, so
+  the details behind the digest are still available.
+
+```bash
+curl -OJ http://127.0.0.1:8787/api/export   # saves zmnmon-<host>-<timestamp>.md
+```
+
 ## Tests
 
 ```bash
@@ -70,7 +86,8 @@ python3 -m unittest discover -s tests -v
 
 - `collector.py` — samples TCP connection states and per-process CPU/memory.
 - `sniffer.py` — optional `tcpdump`-based HTTP URL capture.
-- `server.py` — sampling thread plus a `http.server` that exposes `/api/samples`
-  and `/api/meta` and serves the static dashboard.
+- `server.py` — sampling thread plus a `http.server` that exposes `/api/samples`,
+  `/api/meta`, `/api/export`, and serves the static dashboard.
+- `export.py` — builds the Markdown digest + raw report served by `/api/export`.
 - `static/` — the dashboard UI ([uPlot](https://github.com/leeoniya/uPlot) charts).
 - `zmnmon.py` — CLI entry point.

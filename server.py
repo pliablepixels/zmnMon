@@ -14,6 +14,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import export
 from collector import Sampler, TCP_STATES
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -73,6 +74,18 @@ def make_handler(store: SampleStore, meta: dict):
         def _json(self, obj):
             self._send(200, json.dumps(obj).encode(), "application/json")
 
+        def _export(self):
+            data = store.since(0)
+            body = export.build_report(meta, data["samples"], data["latest"]).encode()
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            filename = f"zmnmon-{meta.get('hostname', 'host')}-{stamp}.md"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self):
             parsed = urlparse(self.path)
             path = parsed.path
@@ -84,6 +97,8 @@ def make_handler(store: SampleStore, meta: dict):
                 qs = parse_qs(parsed.query)
                 since = float(qs.get("since", ["0"])[0])
                 return self._json(store.since(since))
+            if path == "/api/export":
+                return self._export()
             if path.startswith("/static/"):
                 return self._serve_static(path[len("/static/"):])
             self._send(404, b"not found", "text/plain")
