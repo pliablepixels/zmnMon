@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from server import MarkerStore
+from server import MarkerStore, SampleStore
 
 
 class MarkerStoreTests(unittest.TestCase):
@@ -43,6 +43,30 @@ class MarkerStoreTests(unittest.TestCase):
         store = MarkerStore()
         store.add(1.0, "x")
         self.assertFalse(store.delete(999))
+
+
+class SampleStoreTests(unittest.TestCase):
+    def test_clear_empties_history_and_latest(self):
+        store = SampleStore(maxlen=10)
+        store.add({"ts": 1.0})
+        store.clear()
+        snap = store.since(0)
+        self.assertEqual(snap["samples"], [])
+        self.assertIsNone(snap["latest"])
+
+    def test_set_maxlen_keeps_most_recent_when_shrinking(self):
+        store = SampleStore(maxlen=10)
+        for ts in (1.0, 2.0, 3.0, 4.0, 5.0):
+            store.add({"ts": ts})
+        store.set_maxlen(3)
+        self.assertEqual([s["ts"] for s in store.since(0)["samples"]], [3.0, 4.0, 5.0])
+
+    def test_set_maxlen_preserves_latest(self):
+        store = SampleStore(maxlen=10)
+        for ts in (1.0, 2.0, 3.0):
+            store.add({"ts": ts})
+        store.set_maxlen(1)
+        self.assertEqual(store.since(0)["latest"]["ts"], 3.0)
 
 
 if __name__ == "__main__":

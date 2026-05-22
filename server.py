@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -48,6 +49,15 @@ class SampleStore:
             samples = [s for s in self._history if s["ts"] > ts]
             return {"samples": samples, "latest": self._latest}
 
+    def clear(self) -> None:
+        with self._lock:
+            self._history.clear()
+            self._latest = None
+
+    def set_maxlen(self, n: int) -> None:
+        with self._lock:
+            self._history = deque(self._history, maxlen=max(1, n))
+
 
 class MarkerStore:
     """Thread-safe store of user annotations (time-anchored notes)."""
@@ -78,17 +88,30 @@ class MarkerStore:
             return [dict(m) for m in sorted(self._markers, key=lambda m: m["ts"])]
 
 
-def _sampling_loop(sampler: Sampler, store: SampleStore, interval: float, stop: threading.Event):
+class RunState:
+    """Mutable timing knobs shared by the sampling loop and the HTTP handler."""
+
+    def __init__(self, interval: float, history_seconds: int):
+        self.interval = interval
+        self.history_seconds = history_seconds
+
+
+def history_maxlen(history_seconds: float, interval: float) -> int:
+    return max(1, int(history_seconds / max(interval, 0.1)))
+
+
+def _sampling_loop(sampler: Sampler, store: SampleStore, state: RunState, stop: threading.Event):
     while not stop.is_set():
         start = time.time()
         try:
             store.add(sampler.sample())
         except Exception as exc:  # keep the thread alive across transient failures
             print(f"[zmnMon] sample error: {exc}")
-        stop.wait(max(0.0, interval - (time.time() - start)))
+        stop.wait(max(0.0, state.interval - (time.time() - start)))
 
 
-def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore"):
+def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore",
+                 sampler: Sampler, state: "RunState"):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # silence per-request logging
             pass
@@ -137,8 +160,14 @@ def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore"):
             self._send(404, b"not found", "text/plain")
 
         def do_POST(self):
-            if urlparse(self.path).path != "/api/markers":
-                return self._send(404, b"not found", "text/plain")
+            path = urlparse(self.path).path
+            if path == "/api/markers":
+                return self._add_marker()
+            if path == "/api/settings":
+                return self._update_settings()
+            return self._send(404, b"not found", "text/plain")
+
+        def _add_marker(self):
             body = self._read_json()
             if body is None:
                 return self._send(400, b"invalid JSON body", "text/plain")
@@ -150,6 +179,62 @@ def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore"):
             if not text:
                 return self._send(400, b"text must not be empty", "text/plain")
             return self._json(markers.add(ts, text))
+
+        def _update_settings(self):
+            body = self._read_json()
+            if body is None:
+                return self._send(400, b"invalid JSON body", "text/plain")
+            # Validate every provided field before applying any of them.
+            proc = zm_host = interval = history = None
+            if "proc" in body:
+                proc = str(body["proc"]).strip()
+                if not proc:
+                    return self._send(400, b"process pattern must not be empty", "text/plain")
+                try:
+                    re.compile(proc)
+                except re.error as exc:
+                    return self._send(400, f"invalid regex: {exc}".encode(), "text/plain")
+            if "zm_host" in body:
+                zm_host = str(body["zm_host"]).strip() or None
+            if "interval" in body:
+                try:
+                    interval = float(body["interval"])
+                except (TypeError, ValueError):
+                    return self._send(400, b"interval must be a number", "text/plain")
+                if interval < 0.1:
+                    return self._send(400, b"interval must be >= 0.1", "text/plain")
+            if "history_seconds" in body:
+                try:
+                    history = int(body["history_seconds"])
+                except (TypeError, ValueError):
+                    return self._send(400, b"history_seconds must be an integer", "text/plain")
+                if history < 1:
+                    return self._send(400, b"history_seconds must be >= 1", "text/plain")
+
+            # Apply only what actually changed.
+            cleared = resized = False
+            if proc is not None and proc != meta["proc_pattern"]:
+                sampler.set_pattern(proc)
+                meta["proc_pattern"] = proc
+                cleared = True
+            if "zm_host" in body and zm_host != meta["zm_host"]:
+                sampler.set_zm_host(zm_host)
+                meta["zm_host"] = zm_host
+                cleared = True
+            if interval is not None and interval != meta["interval"]:
+                state.interval = interval
+                meta["interval"] = interval
+                resized = True
+            if history is not None and history != meta["history_seconds"]:
+                state.history_seconds = history
+                meta["history_seconds"] = history
+                resized = True
+
+            if cleared:
+                store.clear()
+            if resized:
+                store.set_maxlen(history_maxlen(state.history_seconds, state.interval))
+            return self._json(meta)
 
         def do_DELETE(self):
             parsed = urlparse(self.path)
@@ -183,10 +268,10 @@ def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore"):
 
 
 def run(zm_host, proc_pattern, interval, port, history_seconds, sniffer=None):
-    maxlen = max(1, int(history_seconds / max(interval, 0.1)))
     sampler = Sampler(proc_pattern=proc_pattern, zm_host=zm_host, sniffer=sniffer)
-    store = SampleStore(maxlen=maxlen)
+    store = SampleStore(maxlen=history_maxlen(history_seconds, interval))
     markers = MarkerStore()
+    state = RunState(interval=interval, history_seconds=history_seconds)
     meta = {
         "zm_host": zm_host,
         "proc_pattern": proc_pattern,
@@ -201,11 +286,13 @@ def run(zm_host, proc_pattern, interval, port, history_seconds, sniffer=None):
 
     stop = threading.Event()
     t = threading.Thread(
-        target=_sampling_loop, args=(sampler, store, interval, stop), daemon=True
+        target=_sampling_loop, args=(sampler, store, state, stop), daemon=True
     )
     t.start()
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, meta, markers))
+    httpd = ThreadingHTTPServer(
+        ("127.0.0.1", port), make_handler(store, meta, markers, sampler, state)
+    )
     print(f"[zmnMon] sampling every {interval}s, peer filter={zm_host or 'none'}")
     print(f"[zmnMon] dashboard: http://127.0.0.1:{port}/")
     try:

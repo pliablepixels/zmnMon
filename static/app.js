@@ -1,7 +1,9 @@
 "use strict";
 
-const ALERT_CW_WARN = 3;     // CLOSE_WAIT count -> header warns + chart shading
-const ALERT_CW_CRIT = 8;     // CLOSE_WAIT count -> header critical
+// CLOSE_WAIT alert levels (header + chart shading). Client-only; adjustable in
+// Settings and remembered across reloads via localStorage.
+let ALERT_CW_WARN = Number(localStorage.getItem("zmn.cwWarn")) || 3;
+let ALERT_CW_CRIT = Number(localStorage.getItem("zmn.cwCrit")) || 8;
 const MAX_POINTS = 5000;     // client-side history cap
 const NOISE_STATES = ["LISTEN", "CLOSING"]; // hidden from the states chart by default
 
@@ -20,6 +22,7 @@ let markers = [];
 let lastTs = 0;
 let lastRxWall = 0;
 let showNoise = false;
+let pollTimer = null;
 const charts = {};
 
 const MARKER_COLOR = "#d29922";
@@ -85,6 +88,7 @@ function shadePlugin(seriesLabel, threshold, color) {
   return {
     hooks: {
       drawClear: (u) => {
+        const t = typeof threshold === "function" ? threshold() : threshold;
         const si = u.series.findIndex((s) => s._label === seriesLabel);
         if (si < 1) return;
         const xs = u.data[0], ys = u.data[si];
@@ -92,7 +96,7 @@ function shadePlugin(seriesLabel, threshold, color) {
         ctx.save();
         ctx.fillStyle = color;
         for (let i = 0; i < xs.length; i++) {
-          if ((ys[i] || 0) < threshold) continue;
+          if ((ys[i] || 0) < t) continue;
           const xPrev = i > 0 ? (xs[i - 1] + xs[i]) / 2 : xs[i];
           const xNext = i < xs.length - 1 ? (xs[i] + xs[i + 1]) / 2 : xs[i];
           const x0 = u.valToPos(xPrev, "x", true);
@@ -232,6 +236,89 @@ async function deleteMarker(id) {
 
 function redrawMarkers() { for (const k in charts) charts[k].u.redraw(); }
 
+// ---- settings -------------------------------------------------------------
+function restartPoll() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(poll, Math.max(1000, (meta.interval || 1) * 1000));
+}
+
+function settingsEl() {
+  let el = $("settings-pop");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "settings-pop";
+    document.body.appendChild(el);
+    document.addEventListener("mousedown", (e) => {
+      if (el.style.display !== "none" && !el.contains(e.target) && e.target.id !== "settings-btn")
+        el.style.display = "none";
+    });
+  }
+  return el;
+}
+
+function toggleSettings() {
+  const el = settingsEl();
+  if (el.style.display === "flex") { el.style.display = "none"; return; }
+  el.innerHTML =
+    '<label>Process pattern<input id="set-proc" type="text"></label>' +
+    '<label>Peer / ZM host<input id="set-zmhost" type="text" placeholder="all peers"></label>' +
+    '<label>Sample interval (s)<input id="set-interval" type="number" min="0.1" step="0.1"></label>' +
+    '<label>History (s)<input id="set-history" type="number" min="1" step="1"></label>' +
+    '<label>CLOSE_WAIT warn<input id="set-warn" type="number" min="0" step="1"></label>' +
+    '<label>CLOSE_WAIT critical<input id="set-crit" type="number" min="0" step="1"></label>' +
+    '<div class="row"><button id="set-apply">Apply</button><span id="set-err"></span></div>';
+  $("set-proc").value = meta.proc_pattern || "";
+  $("set-zmhost").value = meta.zm_host || "";
+  $("set-interval").value = meta.interval;
+  $("set-history").value = meta.history_seconds;
+  $("set-warn").value = ALERT_CW_WARN;
+  $("set-crit").value = ALERT_CW_CRIT;
+  const btn = $("settings-btn").getBoundingClientRect();
+  el.style.display = "flex";
+  el.style.top = (btn.bottom + 6) + "px";
+  el.style.right = (window.innerWidth - btn.right) + "px";
+  $("set-apply").onclick = applySettings;
+  $("set-proc").focus();
+}
+
+async function applySettings() {
+  const errEl = $("set-err");
+  errEl.textContent = "";
+  const warn = Number($("set-warn").value), crit = Number($("set-crit").value);
+  if (!Number.isFinite(warn) || !Number.isFinite(crit) || warn > crit) {
+    errEl.textContent = "warn must be a number <= crit";
+    return;
+  }
+  ALERT_CW_WARN = warn; ALERT_CW_CRIT = crit;
+  localStorage.setItem("zmn.cwWarn", warn);
+  localStorage.setItem("zmn.cwCrit", crit);
+
+  const prevProc = meta.proc_pattern, prevZm = meta.zm_host || "", prevInt = meta.interval;
+  const payload = {
+    proc: $("set-proc").value.trim(),
+    zm_host: $("set-zmhost").value.trim(),
+    interval: Number($("set-interval").value),
+    history_seconds: Number($("set-history").value),
+  };
+  try {
+    const r = await fetch("/api/settings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) { errEl.textContent = await r.text(); return; }
+    meta = await r.json();
+    if (meta.proc_pattern !== prevProc || (meta.zm_host || "") !== prevZm) {
+      samples = []; latest = null; lastTs = 0;  // filter changed -> refetch fresh
+    }
+    if (meta.interval !== prevInt) restartPoll();
+    settingsEl().style.display = "none";
+    render();
+    await poll();
+  } catch (e) {
+    errEl.textContent = "request failed";
+  }
+}
+
 function axisX() { return { stroke: "#8b949e", grid: { stroke: "#21262d", width: 1 }, ticks: { stroke: "#30363d" } }; }
 function axisY() { return { stroke: "#8b949e", grid: { stroke: "#21262d", width: 1 }, ticks: { stroke: "#30363d" }, size: 48 }; }
 
@@ -286,7 +373,7 @@ function render() {
   const stuck = samples.map((s) => (s.tcp_states.CLOSE_WAIT || 0) + (s.tcp_states.FIN_WAIT_2 || 0));
   if (Math.max(0, ...stuck) > 0) { labels.push("STUCK"); data.push(stuck); }
   upsert("chart-states", labels, data, stateStyler, fmtNum,
-    [shadePlugin("CLOSE_WAIT", ALERT_CW_WARN, "rgba(218,54,52,0.14)")]);
+    [shadePlugin("CLOSE_WAIT", () => ALERT_CW_WARN, "rgba(218,54,52,0.14)")]);
 
   // ---- per-process series ----
   const names = [...new Set(samples.flatMap((s) => s.processes.map((p) => p.name)))].sort();
@@ -387,7 +474,8 @@ window.addEventListener("focus", poll);
   window.zmnCharts = charts;  // debug handle: inspect uPlot instances from the console
   meta = await (await fetch("/api/meta")).json();
   $("toggle-noise").addEventListener("change", (e) => { showNoise = e.target.checked; render(); });
+  $("settings-btn").addEventListener("click", toggleSettings);
   await poll();
-  setInterval(poll, Math.max(1000, (meta.interval || 1) * 1000));
+  restartPoll();
   setInterval(updateLiveness, 1000);
 })();

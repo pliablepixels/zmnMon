@@ -60,6 +60,24 @@ To capture which HTTP URL each socket is hitting (plaintext HTTP only), run as r
 sudo python3 zmnmon.py --zm-host 192.168.183.250 --sniff
 ```
 
+## Settings
+
+The CLI flags set the initial values, but the gear button (⚙) in the header opens
+a settings panel to change them at runtime:
+
+- **Process pattern** and **peer / ZM host** — change *what* is monitored.
+  Applying them clears the collected history and resets the churn baseline so the
+  charts restart cleanly under the new filter. An invalid regex is rejected with
+  an inline error.
+- **Sample interval** and **history length** — change *how* data is retained.
+  These resize the buffer but keep existing data.
+- **CLOSE_WAIT warn / critical** — the alert thresholds driving the header badge
+  and the red chart shading. These are client-side and remembered across reloads
+  (`localStorage`).
+
+Server-side changes are runtime-only; a restart reverts to the CLI values.
+Backed by `POST /api/settings`.
+
 ## Markers
 
 Click any chart to drop a time-stamped note (e.g. "after entering event screen").
@@ -96,8 +114,8 @@ python3 -m unittest discover -s tests -v
 - `collector.py` — samples TCP connection states and per-process CPU/memory.
 - `sniffer.py` — optional `tcpdump`-based HTTP URL capture.
 - `server.py` — sampling thread, an in-memory marker store, and a `http.server`
-  that exposes `/api/samples`, `/api/meta`, `/api/export`, `/api/markers`, and
-  serves the static dashboard.
+  that exposes `/api/samples`, `/api/meta`, `/api/export`, `/api/markers`,
+  `/api/settings`, and serves the static dashboard.
 - `export.py` — builds the Markdown digest + raw report served by `/api/export`.
 - `static/` — the dashboard UI ([uPlot](https://github.com/leeoniya/uPlot) charts).
 - `zmnmon.py` — CLI entry point.

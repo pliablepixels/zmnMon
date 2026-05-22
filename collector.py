@@ -240,10 +240,24 @@ class Sampler:
     """Stateful sampler. Holds the previous connection set to compute churn."""
 
     def __init__(self, proc_pattern: str, zm_host: Optional[str] = None, sniffer=None):
+        self.proc_pattern = proc_pattern
         self.proc_re = re.compile(proc_pattern)
-        self.zm_host = zm_host
+        self.zm_host = zm_host or None
         self.sniffer = sniffer  # optional sniffer.Sniffer: maps local port -> URL
         self._prev_keys: Optional[set] = None
+
+    def set_pattern(self, pattern: str) -> None:
+        """Swap the process-match regex. Raises re.error (leaving state unchanged)
+        if the pattern does not compile. Resets the churn baseline."""
+        compiled = re.compile(pattern)  # may raise before we mutate anything
+        self.proc_re = compiled
+        self.proc_pattern = pattern
+        self._prev_keys = None
+
+    def set_zm_host(self, host: Optional[str]) -> None:
+        """Change the peer filter ('' / None = all peers). Resets the churn baseline."""
+        self.zm_host = host or None
+        self._prev_keys = None
 
     @staticmethod
     def _conn_key(c: dict) -> tuple:
