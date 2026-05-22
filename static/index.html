@@ -103,7 +103,7 @@
   #conn-col .scroll { flex: 1; overflow: auto; min-height: 80px; }
 
   main { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-wrap: wrap;
-    gap: 12px; align-content: flex-start; }
+    gap: 12px; align-content: flex-start; align-items: flex-start; }
   .panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px;
     padding: 8px 10px; min-width: 0; }
   .panel h2 { font-size: 12px; margin: 0; color: #8b949e; font-weight: 600;
@@ -112,11 +112,18 @@
   .panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
   .panel.wide { width: 100%; }
   /* Resizable chart panels: drag the bottom-right corner; the chart fills. */
-  .panel.resizable { flex: none; display: flex; flex-direction: column;
+  .panel.resizable { position: relative; flex: none; display: flex; flex-direction: column;
     resize: both; overflow: hidden; width: calc(50% - 6px); height: 252px;
     min-width: 280px; min-height: 150px; }
   .panel.resizable.wide { width: 100%; }
   .panel.resizable .chart { flex: 1; min-height: 0; }
+  .panel.resizable .panel-head { padding-right: 26px; }  /* clear the collapse button */
+  .chart-collapse { position: absolute; top: 6px; right: 8px; z-index: 5; line-height: 1;
+    background: none; border: 1px solid #30363d; color: #8b949e; border-radius: 4px;
+    cursor: pointer; font-size: 11px; padding: 1px 6px; }
+  .chart-collapse:hover { background: #21262d; color: #c9d1d9; }
+  .panel.collapsed { height: auto !important; min-height: 0; resize: none; }
+  .panel.collapsed .chart, .panel.collapsed .hint, .panel.collapsed .toggle { display: none; }
   .chart { width: 100%; }
   .toggle { color: #8b949e; font-size: 11px; display: inline-flex; align-items: center; gap: 5px;
     cursor: pointer; user-select: none; }
@@ -264,6 +271,21 @@
     <h2>Open file descriptors per process</h2>
     <div class="hint">Linux only. Climbing toward the process fd limit is what the socket leak drives toward.</div>
     <div class="chart" id="chart-fds"></div>
+  </section>
+  <section class="panel resizable">
+    <h2>Threads per process</h2>
+    <div class="hint">Linux only. Unbounded thread growth is another leak signature.</div>
+    <div class="chart" id="chart-threads"></div>
+  </section>
+  <section class="panel resizable">
+    <h2>FD usage (% of limit)</h2>
+    <div class="hint">Linux only. Open fds as a percentage of each process's limit; approaching 100% is failure.</div>
+    <div class="chart" id="chart-fdpct"></div>
+  </section>
+  <section class="panel wide resizable">
+    <h2>Totals across matched processes</h2>
+    <div class="hint">Sum of fds and sockets (left) and RSS in MB (right axis) over all matched processes.</div>
+    <div class="chart" id="chart-total"></div>
   </section>
   <section class="panel wide resizable">
     <h2>Connection churn (per sample)</h2>

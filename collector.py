@@ -219,6 +219,24 @@ def _fd_count(pid: int) -> Optional[int]:
         return None
 
 
+def parse_fd_limit(text: str) -> Optional[int]:
+    """Soft 'Max open files' limit from /proc/<pid>/limits text, or None."""
+    for line in text.splitlines():
+        if line.startswith("Max open files"):
+            parts = line.split()
+            soft = parts[3] if len(parts) >= 4 else ""
+            return int(soft) if soft.isdigit() else None
+    return None
+
+
+def _fd_limit(pid: int) -> Optional[int]:
+    try:
+        with open(f"/proc/{pid}/limits") as f:
+            return parse_fd_limit(f.read())
+    except OSError:
+        return None
+
+
 def _collect_connections() -> list[dict]:
     if platform.system() == "Linux":
         return parse_ss(_run(["ss", "-tanp"]))
@@ -303,6 +321,7 @@ class Sampler:
                 "rss_kb": st.get("rss_kb"),
                 "threads": st.get("threads"),
                 "fds": _fd_count(pid),
+                "fd_limit": _fd_limit(pid),
                 "sockets": sock_by_pid.get(pid, 0),
             })
         processes.sort(key=lambda p: p["name"])

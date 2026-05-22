@@ -4,8 +4,10 @@ A live TCP-state and per-process CPU/memory monitor for hunting socket and
 file-descriptor leaks.
 
 It samples your processes once a second and serves a small web dashboard that
-charts TCP connection states (e.g. `CLOSE_WAIT` growth) and per-process CPU and
-memory over time, plus a live table of the current connections.
+charts TCP connection states (e.g. `CLOSE_WAIT` growth), per-process CPU, memory
+(RSS), sockets, file descriptors, threads, FD usage as a percentage of each
+process's limit, and aggregate totals across all matched processes — plus a live
+table of the current connections.
 
 - **No dependencies** — Python 3 standard library only, no `pip install`.
 - **No root needed** for your own processes (root is only required for `--sniff`).
@@ -122,8 +124,10 @@ rescaling — no extra requests).
 - **Collapse the connections sidebar** with the ◀ button in its header to give the
   charts more room; a thin strip on the left edge reopens it. The collapsed state
   is remembered too.
-- **Reset layout** (in the gear settings panel) clears all remembered chart sizes
-  and re-expands the sidebar.
+- **Collapse a chart** to its header with the ▾ button in its top-right corner to
+  free space for the others; remembered across reloads.
+- **Reset layout** (in the gear settings panel) clears all remembered chart sizes,
+  expands collapsed charts, and re-expands the sidebar.
 
 ## Exporting for analysis
 

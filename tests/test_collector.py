@@ -9,7 +9,29 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from collector import Sampler
+from collector import Sampler, parse_fd_limit
+
+
+# A trimmed real `/proc/<pid>/limits`.
+LIMITS_FIXTURE = """\
+Limit                     Soft Limit           Hard Limit           Units
+Max cpu time              unlimited            unlimited            seconds
+Max file size             unlimited            unlimited            bytes
+Max open files            1024                 4096                 files
+Max locked memory         8388608              8388608              bytes
+"""
+
+
+class FdLimitTests(unittest.TestCase):
+    def test_returns_soft_limit(self):
+        self.assertEqual(parse_fd_limit(LIMITS_FIXTURE), 1024)
+
+    def test_unlimited_returns_none(self):
+        text = "Max open files            unlimited            unlimited            files\n"
+        self.assertIsNone(parse_fd_limit(text))
+
+    def test_missing_line_returns_none(self):
+        self.assertIsNone(parse_fd_limit("Limit  Soft  Hard\nMax cpu time  unlimited\n"))
 
 
 class SetPatternTests(unittest.TestCase):

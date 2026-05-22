@@ -557,7 +557,7 @@ function observePanel(el, u) {
   return ro;
 }
 
-function upsert(elId, labels, data, styler, fmt, extraPlugins, yvalues) {
+function upsert(elId, labels, data, styler, fmt, extraPlugins, yvalues, override) {
   fmt = fmt || fmtNum;
   const el = $(elId);
   const key = labels.join("|");
@@ -570,11 +570,11 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins, yvalues) {
   applySavedSize(el);  // restore remembered panel size before measuring
   const opts = {
     width: el.clientWidth || 600, height: el.clientHeight || 200,
-    scales: { x: { time: true } },
+    scales: (override && override.scales) || { x: { time: true } },
     legend: { show: true, live: true },
     cursor: { drag: { x: false, y: false }, focus: { prox: 30 }, points: { size: 6 } },
     plugins: [tooltipPlugin(fmt), markerPlugin(), ...(extraPlugins || [])],
-    axes: [axisX(), axisY(yvalues)],
+    axes: (override && override.axes) || [axisX(), axisY(yvalues)],
     series: [{ label: "time" }, ...labels.map((l, i) => styler(l, i))],
   };
   const u = new uPlot(opts, data, el);
@@ -614,6 +614,26 @@ function render() {
     procStyler, (v) => v.toFixed(1) + " MB", undefined, (u, splits) => splits.map((v) => v + " MB"));
   upsert("chart-sockets", disp, [xs, ...names.map((n) => samples.map((s) => procAgg(s, n, "sockets")))], procStyler);
   upsert("chart-fds", disp, [xs, ...names.map((n) => samples.map((s) => procAgg(s, n, "fds")))], procStyler);
+  upsert("chart-threads", disp, [xs, ...names.map((n) => samples.map((s) => procAgg(s, n, "threads")))], procStyler);
+  upsert("chart-fdpct", disp,
+    [xs, ...names.map((n) => samples.map((s) => {
+      const lim = procAgg(s, n, "fd_limit"), used = procAgg(s, n, "fds");
+      return lim > 0 ? +(used / lim * 100).toFixed(1) : null;
+    }))],
+    procStyler, (v) => v.toFixed(1) + "%", undefined, (u, sp) => sp.map((v) => v + "%"));
+
+  // ---- aggregate totals across matched processes (RSS on a right axis) ----
+  const sumField = (s, f) => s.processes.reduce((a, p) => a + (p[f] || 0), 0);
+  upsert("chart-total", ["fds", "sockets", "RSS (MB)"],
+    [xs, samples.map((s) => sumField(s, "fds")), samples.map((s) => sumField(s, "sockets")),
+     samples.map((s) => sumField(s, "rss_kb") / 1024)],
+    (label, i) => ({ label, _label: label, stroke: PALETTE[i % PALETTE.length], width: 1.5,
+      points: { show: false }, scale: label === "RSS (MB)" ? "mb" : "y" }),
+    fmtNum, undefined, undefined,
+    { scales: { x: { time: true }, y: {}, mb: {} },
+      axes: [axisX(), axisY(), { scale: "mb", side: 1, stroke: "#8b949e",
+        grid: { show: false }, ticks: { stroke: "#30363d" }, size: 62,
+        values: (u, sp) => sp.map((v) => v + " MB") }] });
 
   upsert("chart-churn", ["opened", "closed"],
     [xs, samples.map((s) => s.churn.opened), samples.map((s) => s.churn.closed)],
@@ -709,12 +729,40 @@ function setLegends(on) {
   for (const k in charts) fitChart(charts[k].el, charts[k].u);  // reclaim/yield legend space
 }
 
+function setupCollapsibles() {
+  document.querySelectorAll(".panel.resizable").forEach((panel) => {
+    const chart = panel.querySelector(".chart");
+    const id = chart && chart.id;
+    const btn = document.createElement("button");
+    btn.className = "chart-collapse";
+    btn.title = "Collapse / expand";
+    panel.appendChild(btn);
+    const apply = (collapsed) => {
+      panel.classList.toggle("collapsed", collapsed);
+      btn.textContent = collapsed ? "▸" : "▾";
+    };
+    apply(id && localStorage.getItem("zmn.collapsed." + id) === "1");
+    btn.addEventListener("click", () => {
+      const collapsed = !panel.classList.contains("collapsed");
+      apply(collapsed);
+      if (id) localStorage.setItem("zmn.collapsed." + id, collapsed ? "1" : "0");
+      if (!collapsed && charts[id]) fitChart(charts[id].el, charts[id].u);  // re-fit on expand
+    });
+  });
+}
+
 function resetLayout() {
   for (const k in charts) {
     const panel = panelOf(charts[k].el);
     if (panel) { panel.style.width = ""; panel.style.height = ""; }
     localStorage.removeItem(sizeKey(k));  // panels revert to CSS defaults; observers resize plots
+    localStorage.removeItem("zmn.collapsed." + k);
   }
+  document.querySelectorAll(".panel.collapsed").forEach((p) => {
+    p.classList.remove("collapsed");
+    const b = p.querySelector(".chart-collapse");
+    if (b) b.textContent = "▾";
+  });
   setSidebar(false);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
@@ -737,6 +785,7 @@ window.addEventListener("focus", poll);
   $("conn-collapse").addEventListener("click", () => setSidebar(true));
   $("sidebar-show").addEventListener("click", () => setSidebar(false));
   if (localStorage.getItem("zmn.sidebar") === "collapsed") setSidebar(true);
+  setupCollapsibles();
   updateNav();
   await poll();
   restartPoll();
