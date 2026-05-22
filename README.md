@@ -120,6 +120,8 @@ rescaling — no extra requests).
 - **Collapse the connections sidebar** with the ◀ button in its header to give the
   charts more room; a thin strip on the left edge reopens it. The collapsed state
   is remembered too.
+- **Reset layout** (in the gear settings panel) clears all remembered chart sizes
+  and re-expands the sidebar.
 
 ## Exporting for analysis
 

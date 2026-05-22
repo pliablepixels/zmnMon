@@ -442,7 +442,8 @@ function toggleSettings() {
     '<label>History (s)<input id="set-history" type="number" min="1" step="1"></label>' +
     '<label>CLOSE_WAIT warn<input id="set-warn" type="number" min="0" step="1"></label>' +
     '<label>CLOSE_WAIT critical<input id="set-crit" type="number" min="0" step="1"></label>' +
-    '<div class="row"><button id="set-apply">Apply</button><span id="set-err"></span></div>';
+    '<div class="row"><button id="set-apply">Apply</button>' +
+    '<button id="set-reset" type="button">Reset layout</button><span id="set-err"></span></div>';
   $("set-proc").value = meta.proc_pattern || "";
   $("set-peer").value = meta.peer || "";
   $("set-interval").value = meta.interval;
@@ -454,6 +455,7 @@ function toggleSettings() {
   el.style.top = (btn.bottom + 6) + "px";
   el.style.right = (window.innerWidth - btn.right) + "px";
   $("set-apply").onclick = applySettings;
+  $("set-reset").onclick = () => { resetLayout(); settingsEl().style.display = "none"; };
   $("set-proc").focus();
 }
 
@@ -687,6 +689,15 @@ async function poll() {
 function setSidebar(collapsed) {
   document.querySelector(".layout").classList.toggle("sidebar-collapsed", collapsed);
   localStorage.setItem("zmn.sidebar", collapsed ? "collapsed" : "open");
+}
+
+function resetLayout() {
+  for (const k in charts) {
+    const panel = panelOf(charts[k].el);
+    if (panel) { panel.style.width = ""; panel.style.height = ""; }
+    localStorage.removeItem(sizeKey(k));  // panels revert to CSS defaults; observers resize plots
+  }
+  setSidebar(false);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 window.addEventListener("focus", poll);
