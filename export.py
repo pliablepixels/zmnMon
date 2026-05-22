@@ -75,7 +75,8 @@ def _process_series(samples: list[dict]) -> tuple[list[int], dict[int, dict]]:
     return order, by_pid
 
 
-def build_report(meta: dict, samples: list[dict], latest: dict | None) -> str:
+def build_report(meta: dict, samples: list[dict], latest: dict | None,
+                 markers: list[dict] | None = None) -> str:
     lines: list[str] = ["# zmnMon report", ""]
     lines.append(f"- **Host:** {meta.get('hostname')} ({meta.get('platform')})")
     lines.append(f"- **ZM host:** {meta.get('zm_host') or 'none'}")
@@ -85,13 +86,22 @@ def build_report(meta: dict, samples: list[dict], latest: dict | None) -> str:
         started = datetime.fromtimestamp(meta["started"]).isoformat(timespec="seconds")
         lines.append(f"- **Started:** {started}")
     lines.append(f"- **Samples:** {len(samples)}")
+    if samples:
+        duration = samples[-1]["ts"] - samples[0]["ts"]
+        lines.append(f"- **Duration:** {duration:.1f}s")
+
+    markers = sorted(markers or [], key=lambda m: m["ts"])
+    lines += ["", "## Markers", ""]
+    if markers:
+        for m in markers:
+            when = datetime.fromtimestamp(m["ts"]).isoformat(timespec="seconds")
+            lines.append(f"- {when} — {m['text']}")
+    else:
+        lines.append("- none added")
 
     if not samples:
         lines += ["", "_No samples collected._", ""]
         return "\n".join(lines) + "\n"
-
-    duration = samples[-1]["ts"] - samples[0]["ts"]
-    lines.append(f"- **Duration:** {duration:.1f}s")
 
     states = _ordered_states(meta, samples)
     state_stats = {
@@ -152,6 +162,8 @@ def build_report(meta: dict, samples: list[dict], latest: dict | None) -> str:
     lines += ["", "## Raw data", "", "Lite samples (time series):", "",
               "```json", json.dumps(samples, separators=(",", ":")), "```",
               "", "Latest connections:", "",
-              "```json", json.dumps(conns, separators=(",", ":")), "```"]
+              "```json", json.dumps(conns, separators=(",", ":")), "```",
+              "", "Markers (raw):", "",
+              "```json", json.dumps(markers, separators=(",", ":")), "```"]
 
     return "\n".join(lines) + "\n"

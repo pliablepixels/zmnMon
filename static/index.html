@@ -36,6 +36,15 @@
   #export { text-decoration: none; padding: 4px 12px; border-radius: 6px; font-weight: 600;
     font-size: 12px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
   #export:hover { background: #30363d; border-color: #8b949e; }
+  #marker-pop { position: fixed; z-index: 50; display: none; gap: 6px; align-items: center;
+    background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 6px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.5); }
+  #marker-pop input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    border-radius: 4px; padding: 3px 6px; font: inherit; width: 220px; }
+  #marker-pop button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+    border-radius: 4px; padding: 3px 8px; cursor: pointer; font: inherit; }
+  #marker-pop button:hover { background: #30363d; }
+  #marker-pop span { color: #c9d1d9; }
 
   /* Connections sidebar: full height of the layout row, scrolls internally. */
   #conn-col { flex: none; width: 440px; display: flex; flex-direction: column;
@@ -134,6 +143,7 @@
         <div class="k"><span class="swatch dash"></span><span><b>STUCK (CW+FIN_WAIT_2)</b> sockets neither side cleaned up. <span class="muted">The single line to watch.</span></span></div>
         <div class="k"><span class="swatch shade"></span><span><b>Red shading</b> CLOSE_WAIT is at or above the alert threshold.</span></div>
         <div class="k"><span class="swatch" style="background:#8b949e"></span><span><b>LISTEN</b> server sockets. <span class="muted">Noise for this bug; hidden by default.</span></span></div>
+        <div class="k"><span class="swatch" style="background:#d29922"></span><span><b>Markers</b> click any chart to drop a time-stamped note; click a marker to delete it. <span class="muted">Notes are included in the export.</span></span></div>
       </div>
     </details>
     <div id="conn-head">

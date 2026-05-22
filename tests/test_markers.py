@@ -1,0 +1,49 @@
+"""Tests for the in-memory marker store.
+
+Run: python3 -m unittest discover -s tests   (from the zmnMon root)
+"""
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from server import MarkerStore
+
+
+class MarkerStoreTests(unittest.TestCase):
+    def test_add_returns_marker_with_id_and_fields(self):
+        store = MarkerStore()
+        m = store.add(100.0, "after entering event screen")
+        self.assertEqual(m["ts"], 100.0)
+        self.assertEqual(m["text"], "after entering event screen")
+        self.assertGreater(m["id"], 0)
+        self.assertIn("created", m)
+
+    def test_ids_increment(self):
+        store = MarkerStore()
+        a = store.add(1.0, "a")
+        b = store.add(2.0, "b")
+        self.assertEqual(b["id"], a["id"] + 1)
+
+    def test_all_sorted_by_ts(self):
+        store = MarkerStore()
+        store.add(300.0, "late")
+        store.add(100.0, "early")
+        store.add(200.0, "mid")
+        self.assertEqual([m["ts"] for m in store.all()], [100.0, 200.0, 300.0])
+
+    def test_delete_removes_and_returns_true(self):
+        store = MarkerStore()
+        m = store.add(1.0, "x")
+        self.assertTrue(store.delete(m["id"]))
+        self.assertEqual(store.all(), [])
+
+    def test_delete_unknown_returns_false(self):
+        store = MarkerStore()
+        store.add(1.0, "x")
+        self.assertFalse(store.delete(999))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -16,10 +16,14 @@ const PALETTE = ["#58a6ff", "#56d364", "#ff7b72", "#ffa657", "#d2a8ff",
 let meta = null;
 let samples = [];
 let latest = null;
+let markers = [];
 let lastTs = 0;
 let lastRxWall = 0;
 let showNoise = false;
 const charts = {};
+
+const MARKER_COLOR = "#d29922";
+const MARKER_HIT_PX = 6;     // click within this many px of a line targets it for delete
 
 const $ = (id) => document.getElementById(id);
 
@@ -101,6 +105,133 @@ function shadePlugin(seriesLabel, threshold, color) {
   };
 }
 
+// Draw a dashed vertical line + truncated label at each marker's timestamp.
+function markerPlugin() {
+  return {
+    hooks: {
+      draw: (u) => {
+        if (!markers.length) return;
+        const ctx = u.ctx, top = u.bbox.top, h = u.bbox.height;
+        const x0 = u.bbox.left, x1 = u.bbox.left + u.bbox.width;
+        ctx.save();
+        ctx.strokeStyle = MARKER_COLOR;
+        ctx.fillStyle = MARKER_COLOR;
+        ctx.lineWidth = 1;
+        ctx.font = "10px -apple-system, system-ui, sans-serif";
+        ctx.textBaseline = "top";
+        for (const m of markers) {
+          const x = u.valToPos(m.ts, "x", true);
+          if (x < x0 || x > x1) continue;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          ctx.moveTo(x, top);
+          ctx.lineTo(x, top + h);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          const label = m.text.length > 18 ? m.text.slice(0, 17) + "…" : m.text;
+          ctx.fillText(label, x + 3, top + 2);
+        }
+        ctx.restore();
+      },
+    },
+  };
+}
+
+// Click a chart to add a marker; click near an existing line to delete it.
+// A drag (zoom select) is ignored so existing interactions still work.
+function attachMarkerClicks(u) {
+  const over = u.over;
+  let downLeft = null, downTop = null;
+  over.addEventListener("mousedown", () => { downLeft = u.cursor.left; downTop = u.cursor.top; });
+  over.addEventListener("mouseup", () => {
+    if (downLeft == null) return;
+    const left = u.cursor.left, top = u.cursor.top;
+    const moved = Math.abs(left - downLeft) + Math.abs(top - downTop);
+    downLeft = downTop = null;
+    if (moved > 4 || left < 0) return;  // drag, or cursor outside plot
+    let hit = null;
+    for (const m of markers) {
+      if (Math.abs(u.valToPos(m.ts, "x") - left) <= MARKER_HIT_PX) { hit = m; break; }
+    }
+    const rect = u.over.getBoundingClientRect();
+    if (hit) openDeletePopover(rect.left + left, rect.top + top, hit);
+    else openAddPopover(rect.left + left, rect.top + top, u.posToVal(left, "x"));
+  });
+}
+
+function popoverEl() {
+  let el = $("marker-pop");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "marker-pop";
+    document.body.appendChild(el);
+    document.addEventListener("mousedown", (e) => {
+      if (el.style.display !== "none" && !el.contains(e.target)) closePopover();
+    });
+  }
+  return el;
+}
+function placePopover(el, x, y) {
+  el.style.display = "flex";
+  const w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = Math.max(4, Math.min(x, window.innerWidth - w - 4)) + "px";
+  el.style.top = Math.max(4, Math.min(y, window.innerHeight - h - 4)) + "px";
+}
+function closePopover() { const el = $("marker-pop"); if (el) el.style.display = "none"; }
+
+function openAddPopover(x, y, ts) {
+  const el = popoverEl();
+  el.innerHTML = '<input type="text" id="marker-input" placeholder="note…" maxlength="200">' +
+    '<button id="marker-save">Add</button>';
+  placePopover(el, x, y);
+  const input = $("marker-input");
+  input.focus();
+  const save = () => {
+    const text = input.value.trim();
+    closePopover();
+    if (text) addMarker(ts, text);
+  };
+  $("marker-save").onclick = save;
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") save();
+    else if (e.key === "Escape") closePopover();
+  };
+}
+
+function openDeletePopover(x, y, marker) {
+  const el = popoverEl();
+  const label = marker.text.length > 30 ? marker.text.slice(0, 29) + "…" : marker.text;
+  el.innerHTML = `<span>Delete: ${esc(label)}?</span><button id="marker-del">Delete</button>`;
+  placePopover(el, x, y);
+  $("marker-del").onclick = () => { closePopover(); deleteMarker(marker.id); };
+}
+
+async function addMarker(ts, text) {
+  try {
+    const r = await fetch("/api/markers", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ts, text }),
+    });
+    if (r.ok) {
+      markers.push(await r.json());
+      markers.sort((a, b) => a.ts - b.ts);
+      redrawMarkers();
+    }
+  } catch (e) { /* ignore; next poll re-syncs */ }
+}
+
+async function deleteMarker(id) {
+  try {
+    const r = await fetch("/api/markers?id=" + id, { method: "DELETE" });
+    if (r.ok) {
+      markers = markers.filter((m) => m.id !== id);
+      redrawMarkers();
+    }
+  } catch (e) { /* ignore; next poll re-syncs */ }
+}
+
+function redrawMarkers() { for (const k in charts) charts[k].u.redraw(); }
+
 function axisX() { return { stroke: "#8b949e", grid: { stroke: "#21262d", width: 1 }, ticks: { stroke: "#30363d" } }; }
 function axisY() { return { stroke: "#8b949e", grid: { stroke: "#21262d", width: 1 }, ticks: { stroke: "#30363d" }, size: 48 }; }
 
@@ -128,11 +259,13 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins) {
     scales: { x: { time: true } },
     legend: { show: true, live: true },
     cursor: { focus: { prox: 30 }, points: { size: 6 } },
-    plugins: [tooltipPlugin(fmt), ...(extraPlugins || [])],
+    plugins: [tooltipPlugin(fmt), markerPlugin(), ...(extraPlugins || [])],
     axes: [axisX(), axisY()],
     series: [{ label: "time" }, ...labels.map((l, i) => styler(l, i))],
   };
-  charts[elId] = { u: new uPlot(opts, data, el), key, el };
+  const u = new uPlot(opts, data, el);
+  attachMarkerClicks(u);
+  charts[elId] = { u, key, el };
 }
 
 function procAgg(sample, name, field) {
@@ -238,6 +371,7 @@ async function poll() {
       if (samples.length > MAX_POINTS) samples.splice(0, samples.length - MAX_POINTS);
     }
     latest = j.latest;
+    if (j.markers) markers = j.markers;
     render();
   } catch (e) { /* liveness flags the gap */ }
   updateLiveness();
@@ -250,6 +384,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) poll
 window.addEventListener("focus", poll);
 
 (async function init() {
+  window.zmnCharts = charts;  // debug handle: inspect uPlot instances from the console
   meta = await (await fetch("/api/meta")).json();
   $("toggle-noise").addEventListener("change", (e) => { showNoise = e.target.checked; render(); });
   await poll();

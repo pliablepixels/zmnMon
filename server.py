@@ -49,6 +49,35 @@ class SampleStore:
             return {"samples": samples, "latest": self._latest}
 
 
+class MarkerStore:
+    """Thread-safe store of user annotations (time-anchored notes)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._markers: list[dict] = []
+        self._next_id = 1
+
+    def add(self, ts: float, text: str) -> dict:
+        with self._lock:
+            marker = {"id": self._next_id, "ts": float(ts), "text": text,
+                      "created": time.time()}
+            self._next_id += 1
+            self._markers.append(marker)
+            return dict(marker)
+
+    def delete(self, marker_id: int) -> bool:
+        with self._lock:
+            for i, m in enumerate(self._markers):
+                if m["id"] == marker_id:
+                    del self._markers[i]
+                    return True
+            return False
+
+    def all(self) -> list[dict]:
+        with self._lock:
+            return [dict(m) for m in sorted(self._markers, key=lambda m: m["ts"])]
+
+
 def _sampling_loop(sampler: Sampler, store: SampleStore, interval: float, stop: threading.Event):
     while not stop.is_set():
         start = time.time()
@@ -59,7 +88,7 @@ def _sampling_loop(sampler: Sampler, store: SampleStore, interval: float, stop: 
         stop.wait(max(0.0, interval - (time.time() - start)))
 
 
-def make_handler(store: SampleStore, meta: dict):
+def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore"):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # silence per-request logging
             pass
@@ -76,7 +105,9 @@ def make_handler(store: SampleStore, meta: dict):
 
         def _export(self):
             data = store.since(0)
-            body = export.build_report(meta, data["samples"], data["latest"]).encode()
+            body = export.build_report(
+                meta, data["samples"], data["latest"], markers.all()
+            ).encode()
             stamp = time.strftime("%Y%m%d-%H%M%S")
             filename = f"zmnmon-{meta.get('hostname', 'host')}-{stamp}.md"
             self.send_response(200)
@@ -96,12 +127,48 @@ def make_handler(store: SampleStore, meta: dict):
             if path == "/api/samples":
                 qs = parse_qs(parsed.query)
                 since = float(qs.get("since", ["0"])[0])
-                return self._json(store.since(since))
+                payload = store.since(since)
+                payload["markers"] = markers.all()
+                return self._json(payload)
             if path == "/api/export":
                 return self._export()
             if path.startswith("/static/"):
                 return self._serve_static(path[len("/static/"):])
             self._send(404, b"not found", "text/plain")
+
+        def do_POST(self):
+            if urlparse(self.path).path != "/api/markers":
+                return self._send(404, b"not found", "text/plain")
+            body = self._read_json()
+            if body is None:
+                return self._send(400, b"invalid JSON body", "text/plain")
+            text = str(body.get("text", "")).strip()
+            try:
+                ts = float(body["ts"])
+            except (KeyError, TypeError, ValueError):
+                return self._send(400, b"ts must be a number", "text/plain")
+            if not text:
+                return self._send(400, b"text must not be empty", "text/plain")
+            return self._json(markers.add(ts, text))
+
+        def do_DELETE(self):
+            parsed = urlparse(self.path)
+            if parsed.path != "/api/markers":
+                return self._send(404, b"not found", "text/plain")
+            try:
+                marker_id = int(parse_qs(parsed.query).get("id", [""])[0])
+            except ValueError:
+                return self._send(400, b"id must be an integer", "text/plain")
+            if markers.delete(marker_id):
+                return self._json({"deleted": True})
+            return self._send(404, b"no such marker", "text/plain")
+
+        def _read_json(self):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                return json.loads(self.rfile.read(length) or b"{}")
+            except (ValueError, json.JSONDecodeError):
+                return None
 
         def _serve_static(self, rel: str):
             # Prevent path traversal; only serve files inside STATIC_DIR.
@@ -119,6 +186,7 @@ def run(zm_host, proc_pattern, interval, port, history_seconds, sniffer=None):
     maxlen = max(1, int(history_seconds / max(interval, 0.1)))
     sampler = Sampler(proc_pattern=proc_pattern, zm_host=zm_host, sniffer=sniffer)
     store = SampleStore(maxlen=maxlen)
+    markers = MarkerStore()
     meta = {
         "zm_host": zm_host,
         "proc_pattern": proc_pattern,
@@ -137,7 +205,7 @@ def run(zm_host, proc_pattern, interval, port, history_seconds, sniffer=None):
     )
     t.start()
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, meta))
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, meta, markers))
     print(f"[zmnMon] sampling every {interval}s, peer filter={zm_host or 'none'}")
     print(f"[zmnMon] dashboard: http://127.0.0.1:{port}/")
     try:

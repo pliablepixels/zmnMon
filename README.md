@@ -60,6 +60,15 @@ To capture which HTTP URL each socket is hitting (plaintext HTTP only), run as r
 sudo python3 zmnmon.py --zm-host 192.168.183.250 --sniff
 ```
 
+## Markers
+
+Click any chart to drop a time-stamped note (e.g. "after entering event screen").
+Type the note in the popover and press Enter. The marker shows as a vertical line
+on **every** chart (they share one time axis), so you can line the note up against
+CPU, sockets, CLOSE_WAIT, etc. Click an existing marker line to delete it. Markers
+are kept in memory (cleared on restart, like the samples) and are included in the
+export. Backed by `POST /api/markers` and `DELETE /api/markers?id=N`.
+
 ## Exporting for analysis
 
 Click **Export** in the dashboard header (or fetch `GET /api/export`) to download
@@ -86,8 +95,9 @@ python3 -m unittest discover -s tests -v
 
 - `collector.py` — samples TCP connection states and per-process CPU/memory.
 - `sniffer.py` — optional `tcpdump`-based HTTP URL capture.
-- `server.py` — sampling thread plus a `http.server` that exposes `/api/samples`,
-  `/api/meta`, `/api/export`, and serves the static dashboard.
+- `server.py` — sampling thread, an in-memory marker store, and a `http.server`
+  that exposes `/api/samples`, `/api/meta`, `/api/export`, `/api/markers`, and
+  serves the static dashboard.
 - `export.py` — builds the Markdown digest + raw report served by `/api/export`.
 - `static/` — the dashboard UI ([uPlot](https://github.com/leeoniya/uPlot) charts).
 - `zmnmon.py` — CLI entry point.

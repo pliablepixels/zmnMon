@@ -159,5 +159,46 @@ class BuildReportTests(unittest.TestCase):
         self.assertIn("no samples", out.lower())
 
 
+class MarkerReportTests(unittest.TestCase):
+    MARKERS = [
+        {"id": 1, "ts": 100.0, "text": "after entering event screen", "created": 100.5},
+        {"id": 2, "ts": 102.0, "text": "left event screen", "created": 102.5},
+    ]
+
+    def _samples(self):
+        return [make_sample(100.0, tcp={"CLOSE_WAIT": 1}),
+                make_sample(102.0, tcp={"CLOSE_WAIT": 2})]
+
+    def test_markers_section_lists_notes(self):
+        out = build_report(META, self._samples(), None, self.MARKERS)
+        self.assertIn("## Markers", out)
+        self.assertIn("after entering event screen", out)
+        self.assertIn("left event screen", out)
+
+    def test_markers_section_precedes_tcp_states(self):
+        out = build_report(META, self._samples(), None, self.MARKERS)
+        self.assertLess(out.index("## Markers"), out.index("## TCP states"))
+
+    def test_no_markers_shows_none_added(self):
+        out = build_report(META, self._samples(), None, [])
+        section = out.split("## Markers", 1)[1].split("##", 1)[0]
+        self.assertIn("none added", section)
+
+    def test_build_report_without_markers_arg_still_works(self):
+        out = build_report(META, self._samples(), None)
+        self.assertIn("## Markers", out)
+        self.assertIn("none added", out.split("## Markers", 1)[1].split("##", 1)[0])
+
+    def test_markers_present_with_empty_history(self):
+        out = build_report(META, [], None, self.MARKERS)
+        self.assertIn("after entering event screen", out)
+
+    def test_markers_in_raw_json(self):
+        out = build_report(META, self._samples(), None, self.MARKERS)
+        block = out.split("Markers (raw):", 1)[1].split("```json", 1)[1].split("```", 1)[0]
+        parsed = json.loads(block)
+        self.assertEqual(parsed[0]["text"], "after entering event screen")
+
+
 if __name__ == "__main__":
     unittest.main()
