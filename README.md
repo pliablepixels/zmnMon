@@ -102,13 +102,16 @@ included in the export. Backed by `POST` / `PATCH` / `DELETE /api/markers`.
 All charts share one time axis and stay synced. The toolbar above the charts has
 zoom in/out, back/forward, **Live**, and **Clear**.
 
-- **Wheel** (or the zoom buttons) changes the granularity. While following, you
-  *stay* live — the window becomes the most recent slice (e.g. "last 30s") and
-  keeps sliding as new data arrives. Zoom all the way out for the full range.
-- **Drag** (or back/forward) pans through time and **freezes** the view at a
-  fixed window so you can inspect history; new data keeps accumulating off-screen.
-- **Live** (or double-clicking a chart) resumes following at the current
-  granularity.
+- **Zoom each chart with its bar** (the slider under the chart) — drag right to
+  zoom in, left for the full range. Zoom is **per-chart**: only that chart
+  changes. The toolbar `+`/`-` zoom every chart at once (each keeping its own
+  level). While following, a zoomed chart shows the most recent slice and keeps
+  sliding as new data arrives. (The mouse wheel scrolls the page — it no longer
+  zooms.)
+- **Drag** a chart (or back/forward) pans through time and **freezes** the view
+  (synced across charts) so you can inspect history; new data keeps accumulating
+  off-screen.
+- **Live** (or double-clicking a chart) resumes following the latest samples.
 - The **legends** checkbox toggles the per-chart legends (remembered across
   reloads); a long legend scrolls rather than crowding out the chart.
 - **Clear** wipes the collected graph data and all markers (after a confirm) so

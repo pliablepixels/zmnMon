@@ -123,7 +123,10 @@
     cursor: pointer; font-size: 11px; padding: 1px 6px; }
   .chart-collapse:hover { background: #21262d; color: #c9d1d9; }
   .panel.collapsed { height: auto !important; min-height: 0; resize: none; }
-  .panel.collapsed .chart, .panel.collapsed .hint, .panel.collapsed .toggle { display: none; }
+  .panel.collapsed .chart, .panel.collapsed .hint, .panel.collapsed .toggle,
+  .panel.collapsed .zoom-bar { display: none; }
+  .zoom-bar { flex: none; width: 100%; margin-top: 4px; height: 14px; cursor: ew-resize;
+    accent-color: #58a6ff; }
   .chart { width: 100%; }
   .toggle { color: #8b949e; font-size: 11px; display: inline-flex; align-items: center; gap: 5px;
     cursor: pointer; user-select: none; }

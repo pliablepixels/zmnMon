@@ -24,9 +24,9 @@ let lastRxWall = 0;
 let showNoise = false;
 let showLegends = localStorage.getItem("zmn.legends") !== "off";
 let pollTimer = null;
-let follow = true;       // does the window's right edge track the latest sample?
-let span = null;         // window width in seconds; null = full data range
-let frozenWin = null;    // fixed {min, max} used only when !follow (after a pan)
+let follow = true;       // does the window's right edge track the latest sample? (synced)
+let rightEdge = null;    // window right-edge epoch seconds when paused (pan); synced
+const chartSpan = {};    // per-chart window width in seconds (id -> sec); absent = full
 const charts = {};
 
 const MARKER_COLOR = "#d29922";
@@ -146,7 +146,8 @@ function markerPlugin() {
 }
 
 // Chart input: plain click = marker (add on empty, edit/delete on a line),
-// horizontal drag = pan, wheel = zoom, double-click = resume live.
+// horizontal drag = pan (synced), double-click = resume live. No wheel handler,
+// so the mouse wheel scrolls the page normally; zoom is the per-chart bar.
 function attachChartInput(u) {
   const over = u.over;
   let downLeft = null, lastX = null, moved = 0;
@@ -158,8 +159,8 @@ function attachChartInput(u) {
     const dx = e.clientX - lastX; lastX = e.clientX;
     moved += Math.abs(dx);
     if (moved > 4 && dx) {
-      const w = currentScale();
-      if (w) panBy(-dx * (w.max - w.min) / (over.clientWidth || 1));
+      const sx = u.scales.x;  // this chart's current window drives the pan rate
+      panBy(-dx * (sx.max - sx.min) / (over.clientWidth || 1));
     }
   });
   window.addEventListener("mouseup", () => {
@@ -176,11 +177,6 @@ function attachChartInput(u) {
     if (hit) openMarkerPopover(rect.left + left, rect.top + top, hit);
     else openAddPopover(rect.left + left, rect.top + top, u.posToVal(left, "x"));
   });
-  over.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const center = u.posToVal(u.cursor.left >= 0 ? u.cursor.left : over.clientWidth / 2, "x");
-    zoomAround(center, e.deltaY < 0 ? 0.8 : 1.25);  // wheel up = zoom in
-  }, { passive: false });
   over.addEventListener("dblclick", goLive);
 }
 
@@ -286,11 +282,9 @@ async function updateMarker(id, text) {
 
 function redrawMarkers() { for (const k in charts) charts[k].u.redraw(); }
 
-// ---- time navigation (zoom / pan, synced across all charts) ----------------
-// follow + span model: zooming changes the span (granularity) and, while
-// following, keeps the window pinned to the latest sample so it slides with new
-// data. Panning sets a fixed frozen window. Live resumes following at the
-// current span.
+// ---- time navigation -------------------------------------------------------
+// Zoom is PER-CHART (each chart's window width = chartSpan[id]); pan and Live are
+// synced (the right edge / follow are shared). Windows are right-anchored.
 function dataBounds() {
   if (!samples.length) return null;
   return { min: samples[0].ts, max: samples[samples.length - 1].ts };
@@ -298,67 +292,55 @@ function dataBounds() {
 function dataSpan() { const b = dataBounds(); return b ? b.max - b.min : 0; }
 function minSpan() { return Math.max(2 * (meta && meta.interval || 1), 0.5); }
 
-// The x-window to show right now, derived from follow/span/frozenWin + data.
-function currentScale() {
+// The x-window for one chart, from its span + the shared follow/rightEdge + data.
+function currentScale(id) {
   const b = dataBounds();
   if (!b) return null;
-  if (!follow) return frozenWin || { min: b.min, max: b.max };
-  if (span == null) return { min: b.min, max: b.max };
-  return { min: b.max - span, max: b.max };  // last `span` seconds, right-anchored
+  const ds = b.max - b.min;
+  let eff = chartSpan[id] == null ? ds : Math.min(ds, Math.max(minSpan(), chartSpan[id]));
+  let re = follow ? b.max : (rightEdge == null ? b.max : rightEdge);
+  re = Math.max(b.min + eff, Math.min(b.max, re));
+  return { min: re - eff, max: re };
 }
 
 function applyScale() {
-  const s = currentScale();
-  if (s) for (const k in charts) charts[k].u.setScale("x", s);
+  for (const k in charts) {
+    const s = currentScale(k);
+    if (s) charts[k].u.setScale("x", s);
+  }
   updateNav();
 }
 
-function effectiveSpan() {
-  const s = currentScale();
-  return s ? s.max - s.min : dataSpan();
+function setChartSpan(id, sec) {
+  const ds = dataSpan();
+  chartSpan[id] = (sec == null || sec >= ds) ? null : Math.max(minSpan(), sec);
+  const c = charts[id];
+  if (c) { const s = currentScale(id); if (s) c.u.setScale("x", s); }
+  updateNav();
 }
 
-function zoomAround(center, factor) {
-  const b = dataBounds();
-  if (!b) return;
-  const newSpan = effectiveSpan() * factor;
-  if (follow) {
-    span = newSpan >= dataSpan() ? null : Math.max(minSpan(), newSpan);
-  } else {
-    const w = frozenWin || { min: b.min, max: b.max };
-    let min = center - (center - w.min) * factor;
-    let max = center + (w.max - center) * factor;
-    if (max - min < minSpan()) { min = center - minSpan() / 2; max = center + minSpan() / 2; }
-    frozenWin = { min: Math.max(b.min, min), max: Math.min(b.max, max) };
-    span = frozenWin.max - frozenWin.min;
+// Toolbar +/-: bulk-zoom every chart, each keeping its own independent span.
+function zoomAll(factor) {
+  const ds = dataSpan();
+  for (const k in charts) {
+    const cur = chartSpan[k] == null ? ds : chartSpan[k];
+    setChartSpan(k, cur * factor);
   }
-  applyScale();
 }
 
 function panBy(deltaSec) {
-  const s = currentScale(), b = dataBounds();
-  if (!s || !b) return;
-  const width = s.max - s.min;
-  let min = s.min + deltaSec, max = s.max + deltaSec;
-  if (min < b.min) { min = b.min; max = b.min + width; }
-  if (max > b.max) { max = b.max; min = b.max - width; }
+  const b = dataBounds();
+  if (!b) return;
+  const base = follow ? b.max : (rightEdge == null ? b.max : rightEdge);
   follow = false;
-  frozenWin = { min, max };
-  span = width;
+  rightEdge = Math.max(b.min, Math.min(b.max, base + deltaSec));
   applyScale();
 }
 
 function goLive() {
   follow = true;
-  frozenWin = null;  // keep span -> resume following at the current granularity
+  rightEdge = null;  // each chart keeps its own zoom
   applyScale();
-}
-
-function fmtSpan(sec) {
-  sec = Math.round(sec);
-  if (sec < 90) return sec + "s";
-  const m = Math.round(sec / 60);
-  return m < 90 ? m + "m" : Math.round(m / 60) + "h";
 }
 
 function updateNav() {
@@ -366,11 +348,10 @@ function updateNav() {
   if (!status) return;
   if (follow) {
     live.classList.add("active");
-    status.textContent = span == null ? "Live — following" : `Live — last ${fmtSpan(span)} window`;
+    status.textContent = "Live — following";
   } else {
     live.classList.remove("active");
-    const w = currentScale();
-    status.textContent = w ? `Frozen: ${fmtClock(w.min)}–${fmtClock(w.max)}` : "Frozen";
+    status.textContent = rightEdge != null ? `Frozen at ${fmtClock(rightEdge)}` : "Frozen";
   }
 }
 
@@ -578,7 +559,7 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins, yvalues, override
     series: [{ label: "time" }, ...labels.map((l, i) => styler(l, i))],
   };
   const u = new uPlot(opts, data, el);
-  const sc = currentScale();
+  const sc = currentScale(elId);
   if (sc) u.setScale("x", sc);
   fitChart(el, u);  // leave room for the legend
   attachChartInput(u);
@@ -737,6 +718,14 @@ function setupCollapsibles() {
     btn.className = "chart-collapse";
     btn.title = "Collapse / expand";
     panel.appendChild(btn);
+    // Per-chart zoom bar: left = full range, right = max zoom-in. Zooms only this chart.
+    const bar = document.createElement("input");
+    bar.type = "range"; bar.min = "0"; bar.max = "100"; bar.value = "0";
+    bar.className = "zoom-bar"; bar.title = "Zoom this chart";
+    bar.addEventListener("input", () => {
+      if (id) setChartSpan(id, dataSpan() * (1 - bar.value / 100));
+    });
+    panel.appendChild(bar);
     const apply = (collapsed) => {
       panel.classList.toggle("collapsed", collapsed);
       btn.textContent = collapsed ? "▸" : "▾";
@@ -763,6 +752,9 @@ function resetLayout() {
     const b = p.querySelector(".chart-collapse");
     if (b) b.textContent = "▾";
   });
+  for (const k in charts) delete chartSpan[k];  // reset per-chart zoom
+  document.querySelectorAll(".zoom-bar").forEach((b) => { b.value = "0"; });
+  goLive();
   setSidebar(false);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
@@ -776,10 +768,10 @@ window.addEventListener("focus", poll);
   $("toggle-legends").checked = showLegends;
   $("toggle-legends").addEventListener("change", (e) => setLegends(e.target.checked));
   $("settings-btn").addEventListener("click", toggleSettings);
-  $("nav-zoomin").addEventListener("click", () => { const w = currentScale(); if (w) zoomAround((w.min + w.max) / 2, 0.6); });
-  $("nav-zoomout").addEventListener("click", () => { const w = currentScale(); if (w) zoomAround((w.min + w.max) / 2, 1 / 0.6); });
-  $("nav-back").addEventListener("click", () => { const w = currentScale(); if (w) panBy(-(w.max - w.min) * 0.25); });
-  $("nav-fwd").addEventListener("click", () => { const w = currentScale(); if (w) panBy((w.max - w.min) * 0.25); });
+  $("nav-zoomin").addEventListener("click", () => zoomAll(0.6));
+  $("nav-zoomout").addEventListener("click", () => zoomAll(1 / 0.6));
+  $("nav-back").addEventListener("click", () => panBy(-dataSpan() * 0.25));
+  $("nav-fwd").addEventListener("click", () => panBy(dataSpan() * 0.25));
   $("nav-live").addEventListener("click", goLive);
   $("nav-clear").addEventListener("click", confirmClear);
   $("conn-collapse").addEventListener("click", () => setSidebar(true));
