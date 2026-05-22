@@ -22,6 +22,7 @@ let markers = [];
 let lastTs = 0;
 let lastRxWall = 0;
 let showNoise = false;
+let showLegends = localStorage.getItem("zmn.legends") !== "off";
 let pollTimer = null;
 let follow = true;       // does the window's right edge track the latest sample?
 let span = null;         // window width in seconds; null = full data range
@@ -498,7 +499,12 @@ async function applySettings() {
 }
 
 function axisX() { return { stroke: "#8b949e", grid: { stroke: "#21262d", width: 1 }, ticks: { stroke: "#30363d" } }; }
-function axisY() { return { stroke: "#8b949e", grid: { stroke: "#21262d", width: 1 }, ticks: { stroke: "#30363d" }, size: 48 }; }
+function axisY(values) {
+  const a = { stroke: "#8b949e", grid: { stroke: "#21262d", width: 1 }, ticks: { stroke: "#30363d" },
+    size: values ? 62 : 48 };
+  if (values) a.values = values;  // e.g. tick labels with a unit suffix
+  return a;
+}
 
 function stateStyler(label) {
   if (label === "STUCK") {
@@ -534,20 +540,24 @@ function persistSize(el) {
   }
 }
 
+// Size the plot to fill its .chart box, leaving room for the legend below it so
+// it isn't clipped by the panel's overflow:hidden (needed for the resize handle).
+function fitChart(el, u) {
+  const legend = u.root && u.root.querySelector(".u-legend");
+  const legendH = legend ? legend.offsetHeight : 0;  // 0 when hidden via CSS; capped + scrolls
+  const w = el.clientWidth, h = Math.max(40, el.clientHeight - legendH);
+  if (w > 0) u.setSize({ width: w, height: h });
+}
+
 function observePanel(el, u) {
   const panel = panelOf(el);
   if (!panel || !window.ResizeObserver) return null;
-  const ro = new ResizeObserver(() => {
-    if (el.clientWidth > 0 && el.clientHeight > 0) {
-      u.setSize({ width: el.clientWidth, height: el.clientHeight });
-    }
-    persistSize(el);
-  });
+  const ro = new ResizeObserver(() => { fitChart(el, u); persistSize(el); });
   ro.observe(panel);
   return ro;
 }
 
-function upsert(elId, labels, data, styler, fmt, extraPlugins) {
+function upsert(elId, labels, data, styler, fmt, extraPlugins, yvalues) {
   fmt = fmt || fmtNum;
   const el = $(elId);
   const key = labels.join("|");
@@ -564,12 +574,13 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins) {
     legend: { show: true, live: true },
     cursor: { drag: { x: false, y: false }, focus: { prox: 30 }, points: { size: 6 } },
     plugins: [tooltipPlugin(fmt), markerPlugin(), ...(extraPlugins || [])],
-    axes: [axisX(), axisY()],
+    axes: [axisX(), axisY(yvalues)],
     series: [{ label: "time" }, ...labels.map((l, i) => styler(l, i))],
   };
   const u = new uPlot(opts, data, el);
   const sc = currentScale();
   if (sc) u.setScale("x", sc);
+  fitChart(el, u);  // leave room for the legend
   attachChartInput(u);
   charts[elId] = { u, key, el, ro: observePanel(el, u) };
 }
@@ -600,7 +611,7 @@ function render() {
   upsert("chart-cpu", disp, [xs, ...names.map((n) => samples.map((s) => procAgg(s, n, "cpu")))],
     procStyler, (v) => v.toFixed(1) + "%");
   upsert("chart-mem", disp, [xs, ...names.map((n) => samples.map((s) => procAgg(s, n, "rss_kb") / 1024))],
-    procStyler, (v) => v.toFixed(1) + " MB");
+    procStyler, (v) => v.toFixed(1) + " MB", undefined, (u, splits) => splits.map((v) => v + " MB"));
   upsert("chart-sockets", disp, [xs, ...names.map((n) => samples.map((s) => procAgg(s, n, "sockets")))], procStyler);
   upsert("chart-fds", disp, [xs, ...names.map((n) => samples.map((s) => procAgg(s, n, "fds")))], procStyler);
 
@@ -691,6 +702,13 @@ function setSidebar(collapsed) {
   localStorage.setItem("zmn.sidebar", collapsed ? "collapsed" : "open");
 }
 
+function setLegends(on) {
+  showLegends = on;
+  document.body.classList.toggle("legends-hidden", !on);
+  localStorage.setItem("zmn.legends", on ? "on" : "off");
+  for (const k in charts) fitChart(charts[k].el, charts[k].u);  // reclaim/yield legend space
+}
+
 function resetLayout() {
   for (const k in charts) {
     const panel = panelOf(charts[k].el);
@@ -706,6 +724,9 @@ window.addEventListener("focus", poll);
   window.zmnCharts = charts;  // debug handle: inspect uPlot instances from the console
   meta = await (await fetch("/api/meta")).json();
   $("toggle-noise").addEventListener("change", (e) => { showNoise = e.target.checked; render(); });
+  document.body.classList.toggle("legends-hidden", !showLegends);
+  $("toggle-legends").checked = showLegends;
+  $("toggle-legends").addEventListener("change", (e) => setLegends(e.target.checked));
   $("settings-btn").addEventListener("click", toggleSettings);
   $("nav-zoomin").addEventListener("click", () => { const w = currentScale(); if (w) zoomAround((w.min + w.max) / 2, 0.6); });
   $("nav-zoomout").addEventListener("click", () => { const w = currentScale(); if (w) zoomAround((w.min + w.max) / 2, 1 / 0.6); });

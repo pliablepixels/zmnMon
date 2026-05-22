@@ -107,6 +107,8 @@ zoom in/out, back/forward, **Live**, and **Clear**.
   fixed window so you can inspect history; new data keeps accumulating off-screen.
 - **Live** (or double-clicking a chart) resumes following at the current
   granularity.
+- The **legends** checkbox toggles the per-chart legends (remembered across
+  reloads); a long legend scrolls rather than crowding out the chart.
 - **Clear** wipes the collected graph data and all markers (after a confirm) so
   you can start a fresh capture. Backed by `POST /api/clear`.
 

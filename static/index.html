@@ -163,6 +163,9 @@
   }
 
   .uplot { font-family: inherit; }
+  body.legends-hidden .u-legend { display: none; }
+  /* Cap the legend height so a many-series legend scrolls instead of crowding out the chart. */
+  .u-legend { max-height: 100px; overflow-y: auto; }
   .u-tooltip { position: absolute; pointer-events: none; z-index: 30;
     background: rgba(13,17,23,.95); border: 1px solid #30363d; border-radius: 6px;
     padding: 6px 8px; font-size: 11px; line-height: 1.5; white-space: nowrap;
@@ -222,6 +225,7 @@
   <section id="nav" class="panel wide">
     <span id="nav-status">Live &mdash; following</span>
     <span class="nav-btns">
+      <label class="toggle"><input type="checkbox" id="toggle-legends"> legends</label>
       <button id="nav-zoomin" title="Zoom in">+</button>
       <button id="nav-zoomout" title="Zoom out">&minus;</button>
       <button id="nav-back" title="Back in time">&#9664;</button>
