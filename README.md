@@ -113,6 +113,14 @@ zoom in/out, back/forward, **Live**, and **Clear**.
 Panning covers all retained history (it is already in the browser, so it is just
 rescaling — no extra requests).
 
+### Layout
+
+- **Resize a chart** by dragging its bottom-right corner (width and height). Each
+  chart's size is remembered across reloads.
+- **Collapse the connections sidebar** with the ◀ button in its header to give the
+  charts more room; a thin strip on the left edge reopens it. The collapsed state
+  is remembered too.
+
 ## Exporting for analysis
 
 Click **Export** in the dashboard header (or fetch `GET /api/export`) to download

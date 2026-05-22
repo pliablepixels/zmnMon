@@ -510,6 +510,41 @@ function procStyler(label, i) {
   return { label, _label: label, stroke: PALETTE[i % PALETTE.length], width: 1.5, points: { show: false } };
 }
 
+// ---- per-panel sizing (resizable + remembered) ----------------------------
+const sizeKey = (id) => "zmn.size." + id;
+function panelOf(el) { return el.closest(".panel"); }
+
+function applySavedSize(el) {
+  const panel = panelOf(el);
+  if (!panel) return;
+  try {
+    const s = JSON.parse(localStorage.getItem(sizeKey(el.id)) || "null");
+    if (s && s.w && s.h) { panel.style.width = s.w + "px"; panel.style.height = s.h + "px"; }
+  } catch (e) { /* ignore bad stored value */ }
+}
+
+function persistSize(el) {
+  const panel = panelOf(el);
+  // Only a user drag sets inline width/height; reflow does not, so this never
+  // overwrites a remembered size with a layout-driven one.
+  if (panel && panel.style.width && panel.style.height) {
+    localStorage.setItem(sizeKey(el.id), JSON.stringify({ w: panel.offsetWidth, h: panel.offsetHeight }));
+  }
+}
+
+function observePanel(el, u) {
+  const panel = panelOf(el);
+  if (!panel || !window.ResizeObserver) return null;
+  const ro = new ResizeObserver(() => {
+    if (el.clientWidth > 0 && el.clientHeight > 0) {
+      u.setSize({ width: el.clientWidth, height: el.clientHeight });
+    }
+    persistSize(el);
+  });
+  ro.observe(panel);
+  return ro;
+}
+
 function upsert(elId, labels, data, styler, fmt, extraPlugins) {
   fmt = fmt || fmtNum;
   const el = $(elId);
@@ -519,9 +554,10 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins) {
     existing.u.setData(data, false);  // never auto-reset; applyScale() sets the window
     return;
   }
-  if (existing) existing.u.destroy();
+  if (existing) { if (existing.ro) existing.ro.disconnect(); existing.u.destroy(); }
+  applySavedSize(el);  // restore remembered panel size before measuring
   const opts = {
-    width: el.clientWidth || 600, height: 200,
+    width: el.clientWidth || 600, height: el.clientHeight || 200,
     scales: { x: { time: true } },
     legend: { show: true, live: true },
     cursor: { drag: { x: false, y: false }, focus: { prox: 30 }, points: { size: 6 } },
@@ -533,7 +569,7 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins) {
   const sc = currentScale();
   if (sc) u.setScale("x", sc);
   attachChartInput(u);
-  charts[elId] = { u, key, el };
+  charts[elId] = { u, key, el, ro: observePanel(el, u) };
 }
 
 function procAgg(sample, name, field) {
@@ -646,9 +682,12 @@ async function poll() {
   updateLiveness();
 }
 
-window.addEventListener("resize", () => {
-  for (const k in charts) charts[k].u.setSize({ width: charts[k].el.clientWidth, height: 200 });
-});
+// Chart sizing is handled per-panel by ResizeObserver (observePanel); window
+// resizes change panel widths via flex reflow, which the observers pick up.
+function setSidebar(collapsed) {
+  document.querySelector(".layout").classList.toggle("sidebar-collapsed", collapsed);
+  localStorage.setItem("zmn.sidebar", collapsed ? "collapsed" : "open");
+}
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 window.addEventListener("focus", poll);
 
@@ -663,6 +702,9 @@ window.addEventListener("focus", poll);
   $("nav-fwd").addEventListener("click", () => { const w = currentScale(); if (w) panBy((w.max - w.min) * 0.25); });
   $("nav-live").addEventListener("click", goLive);
   $("nav-clear").addEventListener("click", confirmClear);
+  $("conn-collapse").addEventListener("click", () => setSidebar(true));
+  $("sidebar-show").addEventListener("click", () => setSidebar(false));
+  if (localStorage.getItem("zmn.sidebar") === "collapsed") setSidebar(true);
   updateNav();
   await poll();
   restartPoll();
