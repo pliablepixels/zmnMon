@@ -1,0 +1,76 @@
+# zmnMon
+
+A live TCP-state and per-process CPU/memory monitor, built to debug the
+zmNinjaNg WebKit socket leak
+([ZoneMinder/zmNinjaNg#150](https://github.com/ZoneMinder/zmNinjaNg/issues/150)).
+
+It samples your processes once a second and serves a small web dashboard that
+charts TCP connection states (e.g. `CLOSE_WAIT` growth) and per-process CPU and
+memory over time, plus a live table of the current connections.
+
+- **No dependencies** — Python 3 standard library only, no `pip install`.
+- **No root needed** for your own processes (root is only required for `--sniff`).
+- **Cross-platform** — Linux samples via `ss` / `ps` / `/proc`; macOS via `lsof` / `ps`.
+
+## Requirements
+
+- Python 3.8+
+- Linux: `ss` and `ps` on `PATH`
+- macOS: `lsof` and `ps` on `PATH`
+- Optional (for `--sniff`): `tcpdump` and root
+
+## Running
+
+Run as the same user that owns the app you want to watch, then open the printed URL:
+
+```bash
+python3 zmnmon.py --zm-host 192.168.183.250
+```
+
+Then visit the dashboard at <http://127.0.0.1:8787/>.
+
+`--zm-host` filters the ZM-only charts and the connection table to that peer.
+You can run without it to monitor all matched processes.
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--zm-host` | _none_ | ZoneMinder server IP; filters ZM-only charts/table and pulls in sockets to that host. |
+| `--proc` | OS-specific regex | Regex matched against the full process command line. |
+| `--interval` | `1.0` | Sample interval in seconds. |
+| `--port` | `8787` | Dashboard port (bound to `127.0.0.1`). |
+| `--history` | `7200` | History retained, in seconds (2h). |
+| `--sniff` | off | Capture the HTTP URL each socket hits via `tcpdump` (needs `--zm-host`, root, plaintext HTTP). |
+| `--sniff-port` | `80` | HTTP port to sniff. |
+| `--sniff-iface` | `any` | Capture interface. |
+
+The default `--proc` regex matches WebKit/tauri/app processes; override it to
+watch something else:
+
+```bash
+python3 zmnmon.py --proc 'my-process-name'
+```
+
+### Sniffing HTTP requests (optional)
+
+To capture which HTTP URL each socket is hitting (plaintext HTTP only), run as root:
+
+```bash
+sudo python3 zmnmon.py --zm-host 192.168.183.250 --sniff
+```
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+## How it works
+
+- `collector.py` — samples TCP connection states and per-process CPU/memory.
+- `sniffer.py` — optional `tcpdump`-based HTTP URL capture.
+- `server.py` — sampling thread plus a `http.server` that exposes `/api/samples`
+  and `/api/meta` and serves the static dashboard.
+- `static/` — the dashboard UI ([uPlot](https://github.com/leeoniya/uPlot) charts).
+- `zmnmon.py` — CLI entry point.
