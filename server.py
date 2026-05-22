@@ -95,6 +95,10 @@ class MarkerStore:
         with self._lock:
             return [dict(m) for m in sorted(self._markers, key=lambda m: m["ts"])]
 
+    def clear(self) -> None:
+        with self._lock:
+            self._markers.clear()
+
 
 class RunState:
     """Mutable timing knobs shared by the sampling loop and the HTTP handler."""
@@ -173,6 +177,10 @@ def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore",
                 return self._add_marker()
             if path == "/api/settings":
                 return self._update_settings()
+            if path == "/api/clear":
+                store.clear()
+                markers.clear()
+                return self._json({"cleared": True})
             return self._send(404, b"not found", "text/plain")
 
         def _add_marker(self):

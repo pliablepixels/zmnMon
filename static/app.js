@@ -23,8 +23,9 @@ let lastTs = 0;
 let lastRxWall = 0;
 let showNoise = false;
 let pollTimer = null;
-let viewMode = "live";   // "live" = follow latest; "frozen" = user-navigated window
-let viewWin = null;      // {min, max} epoch seconds when frozen
+let follow = true;       // does the window's right edge track the latest sample?
+let span = null;         // window width in seconds; null = full data range
+let frozenWin = null;    // fixed {min, max} used only when !follow (after a pan)
 const charts = {};
 
 const MARKER_COLOR = "#d29922";
@@ -156,7 +157,7 @@ function attachChartInput(u) {
     const dx = e.clientX - lastX; lastX = e.clientX;
     moved += Math.abs(dx);
     if (moved > 4 && dx) {
-      const w = currentWindow();
+      const w = currentScale();
       if (w) panBy(-dx * (w.max - w.min) / (over.clientWidth || 1));
     }
   });
@@ -285,60 +286,130 @@ async function updateMarker(id, text) {
 function redrawMarkers() { for (const k in charts) charts[k].u.redraw(); }
 
 // ---- time navigation (zoom / pan, synced across all charts) ----------------
+// follow + span model: zooming changes the span (granularity) and, while
+// following, keeps the window pinned to the latest sample so it slides with new
+// data. Panning sets a fixed frozen window. Live resumes following at the
+// current span.
 function dataBounds() {
   if (!samples.length) return null;
   return { min: samples[0].ts, max: samples[samples.length - 1].ts };
 }
-function currentWindow() { return viewWin || dataBounds(); }
+function dataSpan() { const b = dataBounds(); return b ? b.max - b.min : 0; }
 function minSpan() { return Math.max(2 * (meta && meta.interval || 1), 0.5); }
 
-function setWindow(min, max) {
-  viewMode = "frozen";
-  viewWin = { min, max };
-  for (const k in charts) charts[k].u.setScale("x", { min, max });
+// The x-window to show right now, derived from follow/span/frozenWin + data.
+function currentScale() {
+  const b = dataBounds();
+  if (!b) return null;
+  if (!follow) return frozenWin || { min: b.min, max: b.max };
+  if (span == null) return { min: b.min, max: b.max };
+  return { min: b.max - span, max: b.max };  // last `span` seconds, right-anchored
+}
+
+function applyScale() {
+  const s = currentScale();
+  if (s) for (const k in charts) charts[k].u.setScale("x", s);
   updateNav();
 }
 
-function goLive() {
-  viewMode = "live";
-  viewWin = null;
-  const b = dataBounds();
-  if (b) for (const k in charts) charts[k].u.setScale("x", { min: b.min, max: b.max });
-  updateNav();
+function effectiveSpan() {
+  const s = currentScale();
+  return s ? s.max - s.min : dataSpan();
 }
 
 function zoomAround(center, factor) {
-  const w = currentWindow(), b = dataBounds();
-  if (!w || !b) return;
-  let min = center - (center - w.min) * factor;
-  let max = center + (w.max - center) * factor;
-  if (max - min < minSpan()) { min = center - minSpan() / 2; max = center + minSpan() / 2; }
-  min = Math.max(b.min, min); max = Math.min(b.max, max);
-  if (min <= b.min && max >= b.max) return goLive();  // zoomed all the way out
-  if (max <= min) { min = b.min; max = b.max; }
-  setWindow(min, max);
+  const b = dataBounds();
+  if (!b) return;
+  const newSpan = effectiveSpan() * factor;
+  if (follow) {
+    span = newSpan >= dataSpan() ? null : Math.max(minSpan(), newSpan);
+  } else {
+    const w = frozenWin || { min: b.min, max: b.max };
+    let min = center - (center - w.min) * factor;
+    let max = center + (w.max - center) * factor;
+    if (max - min < minSpan()) { min = center - minSpan() / 2; max = center + minSpan() / 2; }
+    frozenWin = { min: Math.max(b.min, min), max: Math.min(b.max, max) };
+    span = frozenWin.max - frozenWin.min;
+  }
+  applyScale();
 }
 
 function panBy(deltaSec) {
-  const w = currentWindow(), b = dataBounds();
-  if (!w || !b) return;
-  const span = w.max - w.min;
-  let min = w.min + deltaSec, max = w.max + deltaSec;
-  if (min < b.min) { min = b.min; max = b.min + span; }
-  if (max > b.max) { max = b.max; min = b.max - span; }
-  setWindow(min, max);
+  const s = currentScale(), b = dataBounds();
+  if (!s || !b) return;
+  const width = s.max - s.min;
+  let min = s.min + deltaSec, max = s.max + deltaSec;
+  if (min < b.min) { min = b.min; max = b.min + width; }
+  if (max > b.max) { max = b.max; min = b.max - width; }
+  follow = false;
+  frozenWin = { min, max };
+  span = width;
+  applyScale();
+}
+
+function goLive() {
+  follow = true;
+  frozenWin = null;  // keep span -> resume following at the current granularity
+  applyScale();
+}
+
+function fmtSpan(sec) {
+  sec = Math.round(sec);
+  if (sec < 90) return sec + "s";
+  const m = Math.round(sec / 60);
+  return m < 90 ? m + "m" : Math.round(m / 60) + "h";
 }
 
 function updateNav() {
   const status = $("nav-status"), live = $("nav-live");
   if (!status) return;
-  if (viewMode === "live") {
-    status.textContent = "Live — following";
+  if (follow) {
     live.classList.add("active");
+    status.textContent = span == null ? "Live — following" : `Live — last ${fmtSpan(span)} window`;
   } else {
-    status.textContent = `Frozen: ${fmtClock(viewWin.min)}–${fmtClock(viewWin.max)}`;
     live.classList.remove("active");
+    const w = currentScale();
+    status.textContent = w ? `Frozen: ${fmtClock(w.min)}–${fmtClock(w.max)}` : "Frozen";
   }
+}
+
+async function clearAll() {
+  try {
+    const r = await fetch("/api/clear", { method: "POST" });
+    if (!r.ok) return;
+  } catch (e) { return; }
+  samples = []; latest = null; lastTs = 0; markers = [];
+  for (const k in charts) { charts[k].u.destroy(); delete charts[k]; }
+  const tbody = $("conn-table").querySelector("tbody");
+  if (tbody) tbody.innerHTML = '<tr><td class="empty" colspan="7">cleared — waiting for samples…</td></tr>';
+  $("conn-summary").innerHTML = "";
+  $("conn-count").textContent = "";
+  goLive();
+}
+
+function clearPopEl() {
+  let el = $("clear-pop");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "clear-pop";
+    document.body.appendChild(el);
+    document.addEventListener("mousedown", (e) => {
+      if (el.style.display !== "none" && !el.contains(e.target) && e.target.id !== "nav-clear")
+        el.style.display = "none";
+    });
+  }
+  return el;
+}
+
+function confirmClear() {
+  const el = clearPopEl();
+  if (el.style.display === "flex") { el.style.display = "none"; return; }
+  el.innerHTML = "<span>Clear all graphs &amp; markers?</span><button id=\"clear-yes\">Clear</button>";
+  const btn = $("nav-clear").getBoundingClientRect();
+  el.style.display = "flex";
+  el.style.top = (btn.bottom + 6) + "px";
+  el.style.right = Math.max(4, window.innerWidth - btn.right) + "px";
+  $("clear-yes").onclick = () => { el.style.display = "none"; clearAll(); };
 }
 
 // ---- settings -------------------------------------------------------------
@@ -445,7 +516,7 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins) {
   const key = labels.join("|");
   const existing = charts[elId];
   if (existing && existing.key === key) {
-    existing.u.setData(data, viewMode === "live");  // frozen -> keep the navigated window
+    existing.u.setData(data, false);  // never auto-reset; applyScale() sets the window
     return;
   }
   if (existing) existing.u.destroy();
@@ -459,7 +530,8 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins) {
     series: [{ label: "time" }, ...labels.map((l, i) => styler(l, i))],
   };
   const u = new uPlot(opts, data, el);
-  if (viewMode === "frozen" && viewWin) u.setScale("x", viewWin);
+  const sc = currentScale();
+  if (sc) u.setScale("x", sc);
   attachChartInput(u);
   charts[elId] = { u, key, el };
 }
@@ -500,6 +572,7 @@ function render() {
 
   renderConnections();
   renderHeader();
+  applyScale();  // keep the time window (live-sliding or frozen) after new data
 }
 
 function renderConnections() {
@@ -584,11 +657,12 @@ window.addEventListener("focus", poll);
   meta = await (await fetch("/api/meta")).json();
   $("toggle-noise").addEventListener("change", (e) => { showNoise = e.target.checked; render(); });
   $("settings-btn").addEventListener("click", toggleSettings);
-  $("nav-zoomin").addEventListener("click", () => { const w = currentWindow(); if (w) zoomAround((w.min + w.max) / 2, 0.6); });
-  $("nav-zoomout").addEventListener("click", () => { const w = currentWindow(); if (w) zoomAround((w.min + w.max) / 2, 1 / 0.6); });
-  $("nav-back").addEventListener("click", () => { const w = currentWindow(); if (w) panBy(-(w.max - w.min) * 0.25); });
-  $("nav-fwd").addEventListener("click", () => { const w = currentWindow(); if (w) panBy((w.max - w.min) * 0.25); });
+  $("nav-zoomin").addEventListener("click", () => { const w = currentScale(); if (w) zoomAround((w.min + w.max) / 2, 0.6); });
+  $("nav-zoomout").addEventListener("click", () => { const w = currentScale(); if (w) zoomAround((w.min + w.max) / 2, 1 / 0.6); });
+  $("nav-back").addEventListener("click", () => { const w = currentScale(); if (w) panBy(-(w.max - w.min) * 0.25); });
+  $("nav-fwd").addEventListener("click", () => { const w = currentScale(); if (w) panBy((w.max - w.min) * 0.25); });
   $("nav-live").addEventListener("click", goLive);
+  $("nav-clear").addEventListener("click", confirmClear);
   updateNav();
   await poll();
   restartPoll();

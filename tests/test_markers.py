@@ -59,6 +59,13 @@ class MarkerStoreTests(unittest.TestCase):
         store.add(1.0, "x")
         self.assertIsNone(store.update(999, "nope"))
 
+    def test_clear_empties_all_markers(self):
+        store = MarkerStore()
+        store.add(1.0, "a")
+        store.add(2.0, "b")
+        store.clear()
+        self.assertEqual(store.all(), [])
+
 
 class SampleStoreTests(unittest.TestCase):
     def test_clear_empties_history_and_latest(self):

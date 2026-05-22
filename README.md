@@ -97,15 +97,18 @@ included in the export. Backed by `POST` / `PATCH` / `DELETE /api/markers`.
 
 ## Navigating the charts
 
-All charts share one time axis and stay synced. To inspect granular timing or look
-back in time:
+All charts share one time axis and stay synced. The toolbar above the charts has
+zoom in/out, back/forward, **Live**, and **Clear**.
 
-- **Wheel** over a chart zooms in/out (centered on the cursor); **drag** pans
-  through time.
-- The toolbar above the charts has zoom in/out, back/forward, and a **Live**
-  button.
-- Navigating freezes the view at a fixed window while data keeps accumulating;
-  **Live** (or double-clicking a chart) resumes following the latest samples.
+- **Wheel** (or the zoom buttons) changes the granularity. While following, you
+  *stay* live — the window becomes the most recent slice (e.g. "last 30s") and
+  keeps sliding as new data arrives. Zoom all the way out for the full range.
+- **Drag** (or back/forward) pans through time and **freezes** the view at a
+  fixed window so you can inspect history; new data keeps accumulating off-screen.
+- **Live** (or double-clicking a chart) resumes following at the current
+  granularity.
+- **Clear** wipes the collected graph data and all markers (after a confirm) so
+  you can start a fresh capture. Backed by `POST /api/clear`.
 
 Panning covers all retained history (it is already in the browser, so it is just
 rescaling — no extra requests).
@@ -138,7 +141,7 @@ python3 -m unittest discover -s tests -v
 - `sniffer.py` — optional `tcpdump`-based HTTP URL capture.
 - `server.py` — sampling thread, an in-memory marker store, and a `http.server`
   that exposes `/api/samples`, `/api/meta`, `/api/export`, `/api/markers`,
-  `/api/settings`, and serves the static dashboard.
+  `/api/settings`, `/api/clear`, and serves the static dashboard.
 - `export.py` — builds the Markdown digest + raw report served by `/api/export`.
 - `static/` — the dashboard UI ([uPlot](https://github.com/leeoniya/uPlot) charts).
 - `zmnmon.py` — CLI entry point.

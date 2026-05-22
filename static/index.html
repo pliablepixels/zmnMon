@@ -68,6 +68,15 @@
     border-radius: 6px; padding: 3px 10px; cursor: pointer; font: 600 12px inherit; min-width: 30px; }
   .nav-btns button:hover { background: #30363d; border-color: #8b949e; }
   #nav-live.active { background: #12361f; color: #56d364; border-color: #1f6f37; }
+  #nav-clear { color: #ff7b72; }
+  #nav-clear:hover { background: #3d0d11; border-color: #da3633; }
+  #clear-pop { position: fixed; z-index: 50; display: none; gap: 10px; align-items: center;
+    background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.5); }
+  #clear-pop span { color: #c9d1d9; font-size: 12px; }
+  #clear-pop button { background: #da3633; color: #fff; border: 1px solid #f85149;
+    border-radius: 6px; padding: 3px 12px; cursor: pointer; font: 600 12px inherit; }
+  #clear-pop button:hover { background: #f85149; }
 
   /* Connections sidebar: full height of the layout row, scrolls internally. */
   #conn-col { flex: none; width: 440px; display: flex; flex-direction: column;
@@ -194,6 +203,7 @@
       <button id="nav-back" title="Back in time">&#9664;</button>
       <button id="nav-fwd" title="Forward in time">&#9654;</button>
       <button id="nav-live" title="Resume live (or double-click a chart)">Live</button>
+      <button id="nav-clear" title="Clear graphs &amp; markers">Clear</button>
     </span>
   </section>
   <section class="panel wide">
