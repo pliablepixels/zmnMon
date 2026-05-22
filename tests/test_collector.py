@@ -35,21 +35,21 @@ class SetPatternTests(unittest.TestCase):
         self.assertTrue(s.proc_re.search("WebKitNetworkProcess"))
 
 
-class SetZmHostTests(unittest.TestCase):
-    def test_sets_host(self):
+class SetPeerTests(unittest.TestCase):
+    def test_sets_peer(self):
         s = Sampler(proc_pattern="WebKit")
-        s.set_zm_host("192.168.1.5")
-        self.assertEqual(s.zm_host, "192.168.1.5")
+        s.set_peer("192.168.1.5")
+        self.assertEqual(s.peer, "192.168.1.5")
 
     def test_empty_means_all_peers(self):
-        s = Sampler(proc_pattern="WebKit", zm_host="192.168.1.5")
-        s.set_zm_host("")
-        self.assertIsNone(s.zm_host)
+        s = Sampler(proc_pattern="WebKit", peer="192.168.1.5")
+        s.set_peer("")
+        self.assertIsNone(s.peer)
 
     def test_resets_churn_baseline(self):
         s = Sampler(proc_pattern="WebKit")
         s._prev_keys = {("a",)}
-        s.set_zm_host("192.168.1.5")
+        s.set_peer("192.168.1.5")
         self.assertIsNone(s._prev_keys)
 
 

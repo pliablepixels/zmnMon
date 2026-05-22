@@ -79,7 +79,7 @@ def build_report(meta: dict, samples: list[dict], latest: dict | None,
                  markers: list[dict] | None = None) -> str:
     lines: list[str] = ["# zmnMon report", ""]
     lines.append(f"- **Host:** {meta.get('hostname')} ({meta.get('platform')})")
-    lines.append(f"- **ZM host:** {meta.get('zm_host') or 'none'}")
+    lines.append(f"- **Peer:** {meta.get('peer') or 'none'}")
     lines.append(f"- **Process filter:** `{meta.get('proc_pattern')}`")
     lines.append(f"- **Interval:** {meta.get('interval')}s")
     if meta.get("started"):

@@ -366,14 +366,14 @@ function toggleSettings() {
   if (el.style.display === "flex") { el.style.display = "none"; return; }
   el.innerHTML =
     '<label>Process pattern<input id="set-proc" type="text"></label>' +
-    '<label>Peer / ZM host<input id="set-zmhost" type="text" placeholder="all peers"></label>' +
+    '<label>Peer host<input id="set-peer" type="text" placeholder="all peers"></label>' +
     '<label>Sample interval (s)<input id="set-interval" type="number" min="0.1" step="0.1"></label>' +
     '<label>History (s)<input id="set-history" type="number" min="1" step="1"></label>' +
     '<label>CLOSE_WAIT warn<input id="set-warn" type="number" min="0" step="1"></label>' +
     '<label>CLOSE_WAIT critical<input id="set-crit" type="number" min="0" step="1"></label>' +
     '<div class="row"><button id="set-apply">Apply</button><span id="set-err"></span></div>';
   $("set-proc").value = meta.proc_pattern || "";
-  $("set-zmhost").value = meta.zm_host || "";
+  $("set-peer").value = meta.peer || "";
   $("set-interval").value = meta.interval;
   $("set-history").value = meta.history_seconds;
   $("set-warn").value = ALERT_CW_WARN;
@@ -398,10 +398,10 @@ async function applySettings() {
   localStorage.setItem("zmn.cwWarn", warn);
   localStorage.setItem("zmn.cwCrit", crit);
 
-  const prevProc = meta.proc_pattern, prevZm = meta.zm_host || "", prevInt = meta.interval;
+  const prevProc = meta.proc_pattern, prevPeer = meta.peer || "", prevInt = meta.interval;
   const payload = {
     proc: $("set-proc").value.trim(),
-    zm_host: $("set-zmhost").value.trim(),
+    peer: $("set-peer").value.trim(),
     interval: Number($("set-interval").value),
     history_seconds: Number($("set-history").value),
   };
@@ -412,7 +412,7 @@ async function applySettings() {
     });
     if (!r.ok) { errEl.textContent = await r.text(); return; }
     meta = await r.json();
-    if (meta.proc_pattern !== prevProc || (meta.zm_host || "") !== prevZm) {
+    if (meta.proc_pattern !== prevProc || (meta.peer || "") !== prevPeer) {
       samples = []; latest = null; lastTs = 0;  // filter changed -> refetch fresh
     }
     if (meta.interval !== prevInt) restartPoll();
@@ -542,7 +542,7 @@ function renderHeader() {
 
   $("meta").innerHTML =
     `<b>${esc(meta.hostname)}</b> ${esc(meta.platform)} &middot; ` +
-    `peer <b>${esc(meta.zm_host || "all")}</b> &middot; ` +
+    `peer <b>${esc(meta.peer || "all")}</b> &middot; ` +
     `every <b>${meta.interval}s</b> &middot; ` +
     `sniff <b>${meta.sniffing ? "on" : "off"}</b> &middot; <b>${samples.length}</b> samples`;
 }

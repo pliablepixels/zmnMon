@@ -1,8 +1,7 @@
 # zmnMon
 
-A live TCP-state and per-process CPU/memory monitor, built to debug the
-zmNinjaNg WebKit socket leak
-([ZoneMinder/zmNinjaNg#150](https://github.com/ZoneMinder/zmNinjaNg/issues/150)).
+A live TCP-state and per-process CPU/memory monitor for hunting socket and
+file-descriptor leaks.
 
 It samples your processes once a second and serves a small web dashboard that
 charts TCP connection states (e.g. `CLOSE_WAIT` growth) and per-process CPU and
@@ -24,40 +23,49 @@ memory over time, plus a live table of the current connections.
 Run as the same user that owns the app you want to watch, then open the printed URL:
 
 ```bash
-python3 zmnmon.py --zm-host 192.168.183.250
+python3 zmnmon.py --proc 'my-app' --peer 192.168.183.250
 ```
 
 Then visit the dashboard at <http://127.0.0.1:8787/>.
 
-`--zm-host` filters the ZM-only charts and the connection table to that peer.
-You can run without it to monitor all matched processes.
+`--peer` filters the peer-only charts and the connection table to that remote
+host. You can run without it to monitor all matched processes.
 
 ### Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--zm-host` | _none_ | ZoneMinder server IP; filters ZM-only charts/table and pulls in sockets to that host. |
 | `--proc` | OS-specific regex | Regex matched against the full process command line. |
+| `--peer` | _none_ | Remote peer IP; filters the peer-only charts/table and pulls in connections to that host. |
 | `--interval` | `1.0` | Sample interval in seconds. |
 | `--port` | `8787` | Dashboard port (bound to `127.0.0.1`). |
 | `--history` | `7200` | History retained, in seconds (2h). |
-| `--sniff` | off | Capture the HTTP URL each socket hits via `tcpdump` (needs `--zm-host`, root, plaintext HTTP). |
+| `--sniff` | off | Capture the HTTP URL each socket hits via `tcpdump` (needs `--peer`, root, plaintext HTTP). |
 | `--sniff-port` | `80` | HTTP port to sniff. |
 | `--sniff-iface` | `any` | Capture interface. |
 
-The default `--proc` regex matches WebKit/tauri/app processes; override it to
-watch something else:
+The default `--proc` regex matches common desktop-app frameworks
+(WebKit/tauri/Electron/Chrome/`app`); override it to watch your own process:
 
 ```bash
 python3 zmnmon.py --proc 'my-process-name'
 ```
+
+These can also be changed at runtime from the Settings panel (see below).
 
 ### Sniffing HTTP requests (optional)
 
 To capture which HTTP URL each socket is hitting (plaintext HTTP only), run as root:
 
 ```bash
-sudo python3 zmnmon.py --zm-host 192.168.183.250 --sniff
+sudo python3 zmnmon.py --peer 192.168.183.250 --sniff
+```
+
+Or use the convenience script (defaults to `192.168.50.108`, override with an IP):
+
+```bash
+./start.sh                # sudo python3 zmnmon.py --peer 192.168.50.108 --sniff
+./start.sh 10.0.0.42      # use a different peer
 ```
 
 ## Settings
@@ -65,7 +73,7 @@ sudo python3 zmnmon.py --zm-host 192.168.183.250 --sniff
 The CLI flags set the initial values, but the gear button (⚙) in the header opens
 a settings panel to change them at runtime:
 
-- **Process pattern** and **peer / ZM host** — change *what* is monitored.
+- **Process pattern** and **peer host** — change *what* is monitored.
   Applying them clears the collected history and resets the churn baseline so the
   charts restart cleanly under the new filter. An invalid regex is rejected with
   an inline error.

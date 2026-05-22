@@ -2,14 +2,14 @@
 
 `ss`/`lsof` only expose IP:port. To learn which URL a socket was hitting we have
 to read the HTTP request line from the packet payload, which means a packet
-capture. This runs `tcpdump` against the ZoneMinder host and keeps a map of
+capture. This runs `tcpdump` against the target peer host and keeps a map of
 local source port -> last HTTP request seen on it, so even a socket that has
 since gone into CLOSE_WAIT (no live packets) still shows the URL it was serving.
 
 Constraints:
 - Requires root (raw capture). Run zmnMon with sudo, or grant tcpdump cap_net_raw.
 - Plaintext HTTP only. HTTPS payloads are encrypted and yield nothing.
-- IPv4 only (the #150 ZM server is IPv4 on :80).
+- IPv4 only.
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class TcpdumpParser:
     def feed_line(self, line: str):
         m = _IP_RE.search(line)
         if m:
-            # src is the client (we filter capture to dst == ZM host).
+            # src is the client (we filter capture to dst == peer host).
             self._cur_lport = int(m.group(2))
             return None
         m = _REQ_RE.match(line.strip())

@@ -193,7 +193,7 @@ def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore",
             if body is None:
                 return self._send(400, b"invalid JSON body", "text/plain")
             # Validate every provided field before applying any of them.
-            proc = zm_host = interval = history = None
+            proc = peer = interval = history = None
             if "proc" in body:
                 proc = str(body["proc"]).strip()
                 if not proc:
@@ -202,8 +202,8 @@ def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore",
                     re.compile(proc)
                 except re.error as exc:
                     return self._send(400, f"invalid regex: {exc}".encode(), "text/plain")
-            if "zm_host" in body:
-                zm_host = str(body["zm_host"]).strip() or None
+            if "peer" in body:
+                peer = str(body["peer"]).strip() or None
             if "interval" in body:
                 try:
                     interval = float(body["interval"])
@@ -225,9 +225,9 @@ def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore",
                 sampler.set_pattern(proc)
                 meta["proc_pattern"] = proc
                 cleared = True
-            if "zm_host" in body and zm_host != meta["zm_host"]:
-                sampler.set_zm_host(zm_host)
-                meta["zm_host"] = zm_host
+            if "peer" in body and peer != meta["peer"]:
+                sampler.set_peer(peer)
+                meta["peer"] = peer
                 cleared = True
             if interval is not None and interval != meta["interval"]:
                 state.interval = interval
@@ -294,13 +294,13 @@ def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore",
     return Handler
 
 
-def run(zm_host, proc_pattern, interval, port, history_seconds, sniffer=None):
-    sampler = Sampler(proc_pattern=proc_pattern, zm_host=zm_host, sniffer=sniffer)
+def run(peer, proc_pattern, interval, port, history_seconds, sniffer=None):
+    sampler = Sampler(proc_pattern=proc_pattern, peer=peer, sniffer=sniffer)
     store = SampleStore(maxlen=history_maxlen(history_seconds, interval))
     markers = MarkerStore()
     state = RunState(interval=interval, history_seconds=history_seconds)
     meta = {
-        "zm_host": zm_host,
+        "peer": peer,
         "proc_pattern": proc_pattern,
         "interval": interval,
         "history_seconds": history_seconds,
@@ -320,7 +320,7 @@ def run(zm_host, proc_pattern, interval, port, history_seconds, sniffer=None):
     httpd = ThreadingHTTPServer(
         ("127.0.0.1", port), make_handler(store, meta, markers, sampler, state)
     )
-    print(f"[zmnMon] sampling every {interval}s, peer filter={zm_host or 'none'}")
+    print(f"[zmnMon] sampling every {interval}s, peer filter={peer or 'none'}")
     print(f"[zmnMon] dashboard: http://127.0.0.1:{port}/")
     try:
         httpd.serve_forever()

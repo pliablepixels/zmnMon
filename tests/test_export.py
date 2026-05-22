@@ -13,7 +13,7 @@ from export import series_stats, build_report
 
 
 META = {
-    "zm_host": "192.168.183.250",
+    "peer": "192.168.183.250",
     "proc_pattern": "WebKit|tauri",
     "interval": 1.0,
     "history_seconds": 7200,
@@ -30,7 +30,7 @@ def make_sample(ts, *, procs=None, tcp=None, churn=(0, 0)):
         "ts": ts,
         "processes": procs or [],
         "tcp_states": tcp or {},
-        "zm_states": tcp or {},
+        "peer_states": tcp or {},
         "churn": {"opened": churn[0], "closed": churn[1]},
     }
 

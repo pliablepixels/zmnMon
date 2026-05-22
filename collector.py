@@ -36,10 +36,11 @@ TCP_STATES = [
     "LISTEN",
 ]
 
-# Default process-name regex per platform. Override with --proc.
+# Default process-name regex per platform: common desktop-app frameworks.
+# Override with --proc (or the Settings panel) to target your own process.
 DEFAULT_PROC_RE = {
-    "Linux": r"WebKit|tauri|(^|/)app($|\s)|nph-zms",
-    "Darwin": r"WebKit|tauri|target/.*/app|(^|/)app($|\s)",
+    "Linux": r"WebKit|tauri|Electron|chrome|(^|/)app($|\s)",
+    "Darwin": r"WebKit|tauri|Electron|Chrome|target/.*/app|(^|/)app($|\s)",
 }
 
 
@@ -239,10 +240,10 @@ def _collect_process_stats(pids: list[int]) -> dict[int, dict]:
 class Sampler:
     """Stateful sampler. Holds the previous connection set to compute churn."""
 
-    def __init__(self, proc_pattern: str, zm_host: Optional[str] = None, sniffer=None):
+    def __init__(self, proc_pattern: str, peer: Optional[str] = None, sniffer=None):
         self.proc_pattern = proc_pattern
         self.proc_re = re.compile(proc_pattern)
-        self.zm_host = zm_host or None
+        self.peer = peer or None
         self.sniffer = sniffer  # optional sniffer.Sniffer: maps local port -> URL
         self._prev_keys: Optional[set] = None
 
@@ -254,9 +255,9 @@ class Sampler:
         self.proc_pattern = pattern
         self._prev_keys = None
 
-    def set_zm_host(self, host: Optional[str]) -> None:
+    def set_peer(self, peer: Optional[str]) -> None:
         """Change the peer filter ('' / None = all peers). Resets the churn baseline."""
-        self.zm_host = host or None
+        self.peer = peer or None
         self._prev_keys = None
 
     @staticmethod
@@ -268,13 +269,13 @@ class Sampler:
         pids = _discover_pids(self.proc_re)
         all_conns = _collect_connections()
 
-        # Keep connections owned by a matched process, or (if a ZM host is given)
-        # any connection whose peer is that host. The latter catches the
-        # tauri-plugin-http control path described in issue #150.
+        # Keep connections owned by a matched process, or (if a peer is given)
+        # any connection whose remote address is that peer, even if it is not
+        # owned by a matched process.
         def keep(c):
             if c["pid"] in pids:
                 return True
-            if self.zm_host and c["raddr"] == self.zm_host:
+            if self.peer and c["raddr"] == self.peer:
                 return True
             return False
 
@@ -306,8 +307,8 @@ class Sampler:
             })
         processes.sort(key=lambda p: p["name"])
 
-        zm_conns = (
-            [c for c in conns if c["raddr"] == self.zm_host] if self.zm_host else conns
+        peer_conns = (
+            [c for c in conns if c["raddr"] == self.peer] if self.peer else conns
         )
 
         keys = {self._conn_key(c) for c in conns}
@@ -324,7 +325,7 @@ class Sampler:
             "ts": ts,
             "processes": processes,
             "tcp_states": count_states(conns),
-            "zm_states": count_states(zm_conns),
+            "peer_states": count_states(peer_conns),
             "connections": conns,
             "churn": churn,
         }
