@@ -9,7 +9,29 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from collector import Sampler, parse_fd_limit
+from collector import Sampler, parse_fd_limit, DEFAULT_PROC_RE
+
+
+class DefaultPatternTests(unittest.TestCase):
+    """The default --proc should target the app (Tauri/WebKit), not unrelated browsers."""
+
+    def _re(self, osname):
+        return re.compile(DEFAULT_PROC_RE[osname])
+
+    def test_matches_tauri_app(self):
+        path = "/Users/x/zmNinjaNg/app/src-tauri/target/debug/app"
+        self.assertTrue(self._re("Darwin").search(path))
+        self.assertTrue(self._re("Linux").search(path))
+
+    def test_does_not_match_google_chrome(self):
+        chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        self.assertIsNone(self._re("Darwin").search(chrome))
+        self.assertIsNone(self._re("Linux").search(chrome))
+
+    def test_does_not_match_spotify_or_electron(self):
+        for path in ("/Applications/Spotify.app/Contents/MacOS/Spotify",
+                     "/Applications/Claude.app/Contents/Frameworks/Electron Framework.framework/X"):
+            self.assertIsNone(self._re("Darwin").search(path), path)
 
 
 # A trimmed real `/proc/<pid>/limits`.

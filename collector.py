@@ -36,11 +36,13 @@ TCP_STATES = [
     "LISTEN",
 ]
 
-# Default process-name regex per platform: common desktop-app frameworks.
-# Override with --proc (or the Settings panel) to target your own process.
+# Default process-name regex per platform: WebKit/Tauri app processes (the
+# zmNinjaNg case). Intentionally narrow so it does NOT match unrelated browsers
+# like Chrome/Electron apps. Override with --proc (or the Settings panel) to
+# target your own process.
 DEFAULT_PROC_RE = {
-    "Linux": r"WebKit|tauri|Electron|chrome|(^|/)app($|\s)",
-    "Darwin": r"WebKit|tauri|Electron|Chrome|target/.*/app|(^|/)app($|\s)",
+    "Linux": r"WebKit|tauri|(^|/)app($|\s)",
+    "Darwin": r"WebKit|tauri|target/.*/app|(^|/)app($|\s)",
 }
 
 

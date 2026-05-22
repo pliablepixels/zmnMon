@@ -46,8 +46,10 @@ host. You can run without it to monitor all matched processes.
 | `--sniff-port` | `80` | HTTP port to sniff. |
 | `--sniff-iface` | `any` | Capture interface. |
 
-The default `--proc` regex matches common desktop-app frameworks
-(WebKit/tauri/Electron/Chrome/`app`); override it to watch your own process:
+The default `--proc` regex targets WebKit/Tauri app processes (`WebKit|tauri|app`)
+— intentionally narrow so it does not sweep in unrelated browsers like Chrome or
+Electron apps. Override it to watch your own process (also possible at runtime in
+the Settings panel):
 
 ```bash
 python3 zmnmon.py --proc 'my-process-name'
