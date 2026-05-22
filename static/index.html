@@ -60,6 +60,14 @@
     border-radius: 6px; padding: 4px 14px; cursor: pointer; font: 600 13px inherit; }
   #settings-pop button:hover { background: #2ea043; }
   #settings-pop #set-err { color: #ff7b72; font-size: 11px; }
+  #nav { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 6px 10px; }
+  #nav-status { color: #8b949e; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .nav-btns { display: flex; gap: 6px; }
+  .nav-btns button { background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+    border-radius: 6px; padding: 3px 10px; cursor: pointer; font: 600 12px inherit; min-width: 30px; }
+  .nav-btns button:hover { background: #30363d; border-color: #8b949e; }
+  #nav-live.active { background: #12361f; color: #56d364; border-color: #1f6f37; }
 
   /* Connections sidebar: full height of the layout row, scrolls internally. */
   #conn-col { flex: none; width: 440px; display: flex; flex-direction: column;
@@ -159,7 +167,8 @@
         <div class="k"><span class="swatch dash"></span><span><b>STUCK (CW+FIN_WAIT_2)</b> sockets neither side cleaned up. <span class="muted">The single line to watch.</span></span></div>
         <div class="k"><span class="swatch shade"></span><span><b>Red shading</b> CLOSE_WAIT is at or above the alert threshold.</span></div>
         <div class="k"><span class="swatch" style="background:#8b949e"></span><span><b>LISTEN</b> server sockets. <span class="muted">Noise for this bug; hidden by default.</span></span></div>
-        <div class="k"><span class="swatch" style="background:#d29922"></span><span><b>Markers</b> click any chart to drop a time-stamped note; click a marker to delete it. <span class="muted">Notes are included in the export.</span></span></div>
+        <div class="k"><span class="swatch" style="background:#d29922"></span><span><b>Markers</b> click any chart to drop a time-stamped note; click a marker to edit or delete it. <span class="muted">Notes are included in the export.</span></span></div>
+        <div class="k"><span class="swatch" style="background:#8b949e"></span><span><b>Navigate</b> wheel to zoom, drag to pan, or use the toolbar; double-click a chart for live. <span class="muted">All charts stay time-synced.</span></span></div>
       </div>
     </details>
     <div id="conn-head">
@@ -177,6 +186,16 @@
     </div>
   </aside>
   <main>
+  <section id="nav" class="panel wide">
+    <span id="nav-status">Live &mdash; following</span>
+    <span class="nav-btns">
+      <button id="nav-zoomin" title="Zoom in">+</button>
+      <button id="nav-zoomout" title="Zoom out">&minus;</button>
+      <button id="nav-back" title="Back in time">&#9664;</button>
+      <button id="nav-fwd" title="Forward in time">&#9654;</button>
+      <button id="nav-live" title="Resume live (or double-click a chart)">Live</button>
+    </span>
+  </section>
   <section class="panel wide">
     <div class="panel-head">
       <div>

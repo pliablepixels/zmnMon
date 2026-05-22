@@ -83,9 +83,24 @@ Backed by `POST /api/settings`.
 Click any chart to drop a time-stamped note (e.g. "after entering event screen").
 Type the note in the popover and press Enter. The marker shows as a vertical line
 on **every** chart (they share one time axis), so you can line the note up against
-CPU, sockets, CLOSE_WAIT, etc. Click an existing marker line to delete it. Markers
-are kept in memory (cleared on restart, like the samples) and are included in the
-export. Backed by `POST /api/markers` and `DELETE /api/markers?id=N`.
+CPU, sockets, CLOSE_WAIT, etc. Click an existing marker line to **edit or delete**
+it. Markers are kept in memory (cleared on restart, like the samples) and are
+included in the export. Backed by `POST` / `PATCH` / `DELETE /api/markers`.
+
+## Navigating the charts
+
+All charts share one time axis and stay synced. To inspect granular timing or look
+back in time:
+
+- **Wheel** over a chart zooms in/out (centered on the cursor); **drag** pans
+  through time.
+- The toolbar above the charts has zoom in/out, back/forward, and a **Live**
+  button.
+- Navigating freezes the view at a fixed window while data keeps accumulating;
+  **Live** (or double-clicking a chart) resumes following the latest samples.
+
+Panning covers all retained history (it is already in the browser, so it is just
+rescaling — no extra requests).
 
 ## Exporting for analysis
 

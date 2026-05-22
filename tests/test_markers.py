@@ -44,6 +44,21 @@ class MarkerStoreTests(unittest.TestCase):
         store.add(1.0, "x")
         self.assertFalse(store.delete(999))
 
+    def test_update_changes_text_and_preserves_identity(self):
+        store = MarkerStore()
+        m = store.add(100.0, "old note")
+        updated = store.update(m["id"], "new note")
+        self.assertEqual(updated["text"], "new note")
+        self.assertEqual(updated["id"], m["id"])
+        self.assertEqual(updated["ts"], 100.0)
+        self.assertEqual(updated["created"], m["created"])
+        self.assertEqual(store.all()[0]["text"], "new note")
+
+    def test_update_unknown_returns_none(self):
+        store = MarkerStore()
+        store.add(1.0, "x")
+        self.assertIsNone(store.update(999, "nope"))
+
 
 class SampleStoreTests(unittest.TestCase):
     def test_clear_empties_history_and_latest(self):

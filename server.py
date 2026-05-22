@@ -83,6 +83,14 @@ class MarkerStore:
                     return True
             return False
 
+    def update(self, marker_id: int, text: str) -> dict | None:
+        with self._lock:
+            for m in self._markers:
+                if m["id"] == marker_id:
+                    m["text"] = text
+                    return dict(m)
+            return None
+
     def all(self) -> list[dict]:
         with self._lock:
             return [dict(m) for m in sorted(self._markers, key=lambda m: m["ts"])]
@@ -247,6 +255,25 @@ def make_handler(store: SampleStore, meta: dict, markers: "MarkerStore",
             if markers.delete(marker_id):
                 return self._json({"deleted": True})
             return self._send(404, b"no such marker", "text/plain")
+
+        def do_PATCH(self):
+            parsed = urlparse(self.path)
+            if parsed.path != "/api/markers":
+                return self._send(404, b"not found", "text/plain")
+            try:
+                marker_id = int(parse_qs(parsed.query).get("id", [""])[0])
+            except ValueError:
+                return self._send(400, b"id must be an integer", "text/plain")
+            body = self._read_json()
+            if body is None:
+                return self._send(400, b"invalid JSON body", "text/plain")
+            text = str(body.get("text", "")).strip()
+            if not text:
+                return self._send(400, b"text must not be empty", "text/plain")
+            updated = markers.update(marker_id, text)
+            if updated is None:
+                return self._send(404, b"no such marker", "text/plain")
+            return self._json(updated)
 
         def _read_json(self):
             try:

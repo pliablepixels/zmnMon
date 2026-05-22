@@ -23,6 +23,8 @@ let lastTs = 0;
 let lastRxWall = 0;
 let showNoise = false;
 let pollTimer = null;
+let viewMode = "live";   // "live" = follow latest; "frozen" = user-navigated window
+let viewWin = null;      // {min, max} epoch seconds when frozen
 const charts = {};
 
 const MARKER_COLOR = "#d29922";
@@ -141,26 +143,43 @@ function markerPlugin() {
   };
 }
 
-// Click a chart to add a marker; click near an existing line to delete it.
-// A drag (zoom select) is ignored so existing interactions still work.
-function attachMarkerClicks(u) {
+// Chart input: plain click = marker (add on empty, edit/delete on a line),
+// horizontal drag = pan, wheel = zoom, double-click = resume live.
+function attachChartInput(u) {
   const over = u.over;
-  let downLeft = null, downTop = null;
-  over.addEventListener("mousedown", () => { downLeft = u.cursor.left; downTop = u.cursor.top; });
-  over.addEventListener("mouseup", () => {
+  let downLeft = null, lastX = null, moved = 0;
+  over.addEventListener("mousedown", (e) => {
+    downLeft = u.cursor.left; lastX = e.clientX; moved = 0;
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (downLeft == null) return;
+    const dx = e.clientX - lastX; lastX = e.clientX;
+    moved += Math.abs(dx);
+    if (moved > 4 && dx) {
+      const w = currentWindow();
+      if (w) panBy(-dx * (w.max - w.min) / (over.clientWidth || 1));
+    }
+  });
+  window.addEventListener("mouseup", () => {
     if (downLeft == null) return;
     const left = u.cursor.left, top = u.cursor.top;
-    const moved = Math.abs(left - downLeft) + Math.abs(top - downTop);
-    downLeft = downTop = null;
-    if (moved > 4 || left < 0) return;  // drag, or cursor outside plot
+    const wasClick = moved <= 4;
+    downLeft = null;
+    if (!wasClick || left < 0) return;  // a drag (pan), or cursor outside plot
     let hit = null;
     for (const m of markers) {
       if (Math.abs(u.valToPos(m.ts, "x") - left) <= MARKER_HIT_PX) { hit = m; break; }
     }
-    const rect = u.over.getBoundingClientRect();
-    if (hit) openDeletePopover(rect.left + left, rect.top + top, hit);
+    const rect = over.getBoundingClientRect();
+    if (hit) openMarkerPopover(rect.left + left, rect.top + top, hit);
     else openAddPopover(rect.left + left, rect.top + top, u.posToVal(left, "x"));
   });
+  over.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const center = u.posToVal(u.cursor.left >= 0 ? u.cursor.left : over.clientWidth / 2, "x");
+    zoomAround(center, e.deltaY < 0 ? 0.8 : 1.25);  // wheel up = zoom in
+  }, { passive: false });
+  over.addEventListener("dblclick", goLive);
 }
 
 function popoverEl() {
@@ -202,12 +221,27 @@ function openAddPopover(x, y, ts) {
   };
 }
 
-function openDeletePopover(x, y, marker) {
+function openMarkerPopover(x, y, marker) {
   const el = popoverEl();
-  const label = marker.text.length > 30 ? marker.text.slice(0, 29) + "…" : marker.text;
-  el.innerHTML = `<span>Delete: ${esc(label)}?</span><button id="marker-del">Delete</button>`;
+  el.innerHTML = '<input type="text" id="marker-input" maxlength="200">' +
+    '<button id="marker-save">Save</button>' +
+    '<button id="marker-del">Delete</button>';
   placePopover(el, x, y);
+  const input = $("marker-input");
+  input.value = marker.text;
+  input.focus();
+  input.select();
+  const save = () => {
+    const text = input.value.trim();
+    closePopover();
+    if (text && text !== marker.text) updateMarker(marker.id, text);
+  };
+  $("marker-save").onclick = save;
   $("marker-del").onclick = () => { closePopover(); deleteMarker(marker.id); };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") save();
+    else if (e.key === "Escape") closePopover();
+  };
 }
 
 async function addMarker(ts, text) {
@@ -234,7 +268,78 @@ async function deleteMarker(id) {
   } catch (e) { /* ignore; next poll re-syncs */ }
 }
 
+async function updateMarker(id, text) {
+  try {
+    const r = await fetch("/api/markers?id=" + id, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (r.ok) {
+      const upd = await r.json();
+      markers = markers.map((m) => (m.id === upd.id ? upd : m));
+      redrawMarkers();
+    }
+  } catch (e) { /* ignore; next poll re-syncs */ }
+}
+
 function redrawMarkers() { for (const k in charts) charts[k].u.redraw(); }
+
+// ---- time navigation (zoom / pan, synced across all charts) ----------------
+function dataBounds() {
+  if (!samples.length) return null;
+  return { min: samples[0].ts, max: samples[samples.length - 1].ts };
+}
+function currentWindow() { return viewWin || dataBounds(); }
+function minSpan() { return Math.max(2 * (meta && meta.interval || 1), 0.5); }
+
+function setWindow(min, max) {
+  viewMode = "frozen";
+  viewWin = { min, max };
+  for (const k in charts) charts[k].u.setScale("x", { min, max });
+  updateNav();
+}
+
+function goLive() {
+  viewMode = "live";
+  viewWin = null;
+  const b = dataBounds();
+  if (b) for (const k in charts) charts[k].u.setScale("x", { min: b.min, max: b.max });
+  updateNav();
+}
+
+function zoomAround(center, factor) {
+  const w = currentWindow(), b = dataBounds();
+  if (!w || !b) return;
+  let min = center - (center - w.min) * factor;
+  let max = center + (w.max - center) * factor;
+  if (max - min < minSpan()) { min = center - minSpan() / 2; max = center + minSpan() / 2; }
+  min = Math.max(b.min, min); max = Math.min(b.max, max);
+  if (min <= b.min && max >= b.max) return goLive();  // zoomed all the way out
+  if (max <= min) { min = b.min; max = b.max; }
+  setWindow(min, max);
+}
+
+function panBy(deltaSec) {
+  const w = currentWindow(), b = dataBounds();
+  if (!w || !b) return;
+  const span = w.max - w.min;
+  let min = w.min + deltaSec, max = w.max + deltaSec;
+  if (min < b.min) { min = b.min; max = b.min + span; }
+  if (max > b.max) { max = b.max; min = b.max - span; }
+  setWindow(min, max);
+}
+
+function updateNav() {
+  const status = $("nav-status"), live = $("nav-live");
+  if (!status) return;
+  if (viewMode === "live") {
+    status.textContent = "Live — following";
+    live.classList.add("active");
+  } else {
+    status.textContent = `Frozen: ${fmtClock(viewWin.min)}–${fmtClock(viewWin.max)}`;
+    live.classList.remove("active");
+  }
+}
 
 // ---- settings -------------------------------------------------------------
 function restartPoll() {
@@ -339,19 +444,23 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins) {
   const el = $(elId);
   const key = labels.join("|");
   const existing = charts[elId];
-  if (existing && existing.key === key) { existing.u.setData(data); return; }
+  if (existing && existing.key === key) {
+    existing.u.setData(data, viewMode === "live");  // frozen -> keep the navigated window
+    return;
+  }
   if (existing) existing.u.destroy();
   const opts = {
     width: el.clientWidth || 600, height: 200,
     scales: { x: { time: true } },
     legend: { show: true, live: true },
-    cursor: { focus: { prox: 30 }, points: { size: 6 } },
+    cursor: { drag: { x: false, y: false }, focus: { prox: 30 }, points: { size: 6 } },
     plugins: [tooltipPlugin(fmt), markerPlugin(), ...(extraPlugins || [])],
     axes: [axisX(), axisY()],
     series: [{ label: "time" }, ...labels.map((l, i) => styler(l, i))],
   };
   const u = new uPlot(opts, data, el);
-  attachMarkerClicks(u);
+  if (viewMode === "frozen" && viewWin) u.setScale("x", viewWin);
+  attachChartInput(u);
   charts[elId] = { u, key, el };
 }
 
@@ -475,6 +584,12 @@ window.addEventListener("focus", poll);
   meta = await (await fetch("/api/meta")).json();
   $("toggle-noise").addEventListener("change", (e) => { showNoise = e.target.checked; render(); });
   $("settings-btn").addEventListener("click", toggleSettings);
+  $("nav-zoomin").addEventListener("click", () => { const w = currentWindow(); if (w) zoomAround((w.min + w.max) / 2, 0.6); });
+  $("nav-zoomout").addEventListener("click", () => { const w = currentWindow(); if (w) zoomAround((w.min + w.max) / 2, 1 / 0.6); });
+  $("nav-back").addEventListener("click", () => { const w = currentWindow(); if (w) panBy(-(w.max - w.min) * 0.25); });
+  $("nav-fwd").addEventListener("click", () => { const w = currentWindow(); if (w) panBy((w.max - w.min) * 0.25); });
+  $("nav-live").addEventListener("click", goLive);
+  updateNav();
   await poll();
   restartPoll();
   setInterval(updateLiveness, 1000);
