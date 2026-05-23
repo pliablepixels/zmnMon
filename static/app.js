@@ -24,9 +24,11 @@ let lastRxWall = 0;
 let showNoise = false;
 let showLegends = localStorage.getItem("zmn.legends") !== "off";
 let pollTimer = null;
-let follow = true;       // does the window's right edge track the latest sample? (synced)
-let rightEdge = null;    // window right-edge epoch seconds when paused (pan); synced
+let isPanning = false;   // true while dragging a chart; suppresses the hover tooltip
 const chartSpan = {};    // per-chart window width in seconds (id -> sec); absent = full
+const chartLive = {};    // per-chart: false when frozen in the past; absent/true = live
+const chartEdge = {};    // per-chart frozen right-edge epoch seconds (when not live)
+const liveBadges = {};   // per-chart header live/frozen badge element (id -> button)
 const charts = {};
 
 const MARKER_COLOR = "#d29922";
@@ -62,7 +64,7 @@ function tooltipPlugin(fmt) {
       },
       setCursor: (u) => {
         const { idx, left, top } = u.cursor;
-        if (idx == null || left < 0) { el.style.display = "none"; return; }
+        if (isPanning || idx == null || left < 0) { el.style.display = "none"; return; }
         const x = u.data[0][idx];
         let rows = "";
         for (let i = 1; i < u.series.length; i++) {
@@ -146,9 +148,10 @@ function markerPlugin() {
 }
 
 // Chart input: plain click = marker (add on empty, edit/delete on a line),
-// horizontal drag = pan (synced), double-click = resume live. No wheel handler,
-// so the mouse wheel scrolls the page normally; zoom is the per-chart bar.
-function attachChartInput(u) {
+// horizontal drag = pan THIS chart back/forward in its own history, double-click =
+// resume live for THIS chart. No wheel handler, so the wheel scrolls the page;
+// zoom is the per-chart bar.
+function attachChartInput(u, id) {
   const over = u.over;
   let downLeft = null, lastX = null, moved = 0;
   over.addEventListener("mousedown", (e) => {
@@ -158,13 +161,15 @@ function attachChartInput(u) {
     if (downLeft == null) return;
     const dx = e.clientX - lastX; lastX = e.clientX;
     moved += Math.abs(dx);
+    if (moved > 4 && !isPanning) { isPanning = true; u.setCursor({ left: -10, top: -10 }); }  // drag start: hide the hover tooltip
     if (moved > 4 && dx) {
       const sx = u.scales.x;  // this chart's current window drives the pan rate
-      panBy(-dx * (sx.max - sx.min) / (over.clientWidth || 1));
+      panChart(id, -dx * (sx.max - sx.min) / (over.clientWidth || 1));
     }
   });
   window.addEventListener("mouseup", () => {
     if (downLeft == null) return;
+    isPanning = false;
     const left = u.cursor.left, top = u.cursor.top;
     const wasClick = moved <= 4;
     downLeft = null;
@@ -177,7 +182,7 @@ function attachChartInput(u) {
     if (hit) openMarkerPopover(rect.left + left, rect.top + top, hit);
     else openAddPopover(rect.left + left, rect.top + top, u.posToVal(left, "x"));
   });
-  over.addEventListener("dblclick", goLive);
+  over.addEventListener("dblclick", () => goLiveChart(id));
 }
 
 function popoverEl() {
@@ -282,9 +287,11 @@ async function updateMarker(id, text) {
 
 function redrawMarkers() { for (const k in charts) charts[k].u.redraw(); }
 
-// ---- time navigation -------------------------------------------------------
-// Zoom is PER-CHART (each chart's window width = chartSpan[id]); pan and Live are
-// synced (the right edge / follow are shared). Windows are right-anchored.
+// ---- time navigation (fully per-chart) -------------------------------------
+// Every chart is independent: its zoom (chartSpan), whether it follows the latest
+// sample (chartLive), and its frozen right edge when paused (chartEdge). Windows
+// are right-anchored. Drag a chart to go back through ITS history; double-click it
+// (or click its live badge) to resume following.
 function dataBounds() {
   if (!samples.length) return null;
   return { min: samples[0].ts, max: samples[samples.length - 1].ts };
@@ -292,13 +299,14 @@ function dataBounds() {
 function dataSpan() { const b = dataBounds(); return b ? b.max - b.min : 0; }
 function minSpan() { return Math.max(2 * (meta && meta.interval || 1), 0.5); }
 
-// The x-window for one chart, from its span + the shared follow/rightEdge + data.
+// The x-window for one chart, from its own span + live/edge + the data bounds.
 function currentScale(id) {
   const b = dataBounds();
   if (!b) return null;
   const ds = b.max - b.min;
   let eff = chartSpan[id] == null ? ds : Math.min(ds, Math.max(minSpan(), chartSpan[id]));
-  let re = follow ? b.max : (rightEdge == null ? b.max : rightEdge);
+  const live = chartLive[id] !== false;
+  let re = live ? b.max : (chartEdge[id] == null ? b.max : chartEdge[id]);
   re = Math.max(b.min + eff, Math.min(b.max, re));
   return { min: re - eff, max: re };
 }
@@ -307,8 +315,8 @@ function applyScale() {
   for (const k in charts) {
     const s = currentScale(k);
     if (s) charts[k].u.setScale("x", s);
+    updateChartNav(k);
   }
-  updateNav();
 }
 
 function setChartSpan(id, sec) {
@@ -316,42 +324,43 @@ function setChartSpan(id, sec) {
   chartSpan[id] = (sec == null || sec >= ds) ? null : Math.max(minSpan(), sec);
   const c = charts[id];
   if (c) { const s = currentScale(id); if (s) c.u.setScale("x", s); }
-  updateNav();
 }
 
-// Toolbar +/-: bulk-zoom every chart, each keeping its own independent span.
-function zoomAll(factor) {
-  const ds = dataSpan();
-  for (const k in charts) {
-    const cur = chartSpan[k] == null ? ds : chartSpan[k];
-    setChartSpan(k, cur * factor);
-  }
-}
-
-function panBy(deltaSec) {
+// Drag inside a chart shifts only that chart's window back/forward in time.
+function panChart(id, deltaSec) {
   const b = dataBounds();
   if (!b) return;
-  const base = follow ? b.max : (rightEdge == null ? b.max : rightEdge);
-  follow = false;
-  rightEdge = Math.max(b.min, Math.min(b.max, base + deltaSec));
-  applyScale();
+  const live = chartLive[id] !== false;
+  const base = live ? b.max : (chartEdge[id] == null ? b.max : chartEdge[id]);
+  chartLive[id] = false;
+  chartEdge[id] = Math.max(b.min, Math.min(b.max, base + deltaSec));
+  const c = charts[id];
+  if (c) { const s = currentScale(id); if (s) c.u.setScale("x", s); }
+  updateChartNav(id);
 }
 
-function goLive() {
-  follow = true;
-  rightEdge = null;  // each chart keeps its own zoom
-  applyScale();
+function goLiveChart(id) {
+  chartLive[id] = true;
+  delete chartEdge[id];
+  const c = charts[id];
+  if (c) { const s = currentScale(id); if (s) c.u.setScale("x", s); }
+  updateChartNav(id);
 }
 
-function updateNav() {
-  const status = $("nav-status"), live = $("nav-live");
-  if (!status) return;
-  if (follow) {
-    live.classList.add("active");
-    status.textContent = "Live — following";
+// The per-chart live button in the panel header: green "live" while following,
+// red "not live" once dragged into the past. Click it to resume live.
+function updateChartNav(id) {
+  const b = liveBadges[id];
+  if (!b) return;
+  const live = chartLive[id] !== false;
+  b.classList.toggle("frozen", !live);
+  b.textContent = live ? "live" : "not live";
+  if (live) {
+    b.title = "Live — following the latest sample. Drag the chart to go back in time.";
   } else {
-    live.classList.remove("active");
-    status.textContent = rightEdge != null ? `Frozen at ${fmtClock(rightEdge)}` : "Frozen";
+    const t = chartEdge[id] != null ? chartEdge[id] : (dataBounds() || {}).max;
+    b.title = "Frozen at " + (t ? new Date(t * 1000).toLocaleTimeString([], { hour12: false }) : "—") +
+      " — click to resume live";
   }
 }
 
@@ -361,12 +370,14 @@ async function clearAll() {
     if (!r.ok) return;
   } catch (e) { return; }
   samples = []; latest = null; lastTs = 0; markers = [];
-  for (const k in charts) { charts[k].u.destroy(); delete charts[k]; }
+  for (const k in charts) {
+    charts[k].u.destroy(); delete charts[k];
+    delete chartLive[k]; delete chartEdge[k];  // recreated live on the next sample
+  }
   const tbody = $("conn-table").querySelector("tbody");
   if (tbody) tbody.innerHTML = '<tr><td class="empty" colspan="7">cleared — waiting for samples…</td></tr>';
   $("conn-summary").innerHTML = "";
   $("conn-count").textContent = "";
-  goLive();
 }
 
 function clearPopEl() {
@@ -501,6 +512,7 @@ function procStyler(label, i) {
 
 // ---- per-panel sizing (resizable + remembered) ----------------------------
 const sizeKey = (id) => "zmn.size." + id;
+const ORDER_KEY = "zmn.order";   // remembered panel order (array of chart ids)
 function panelOf(el) { return el.closest(".panel"); }
 
 function applySavedSize(el) {
@@ -533,9 +545,135 @@ function fitChart(el, u) {
 function observePanel(el, u) {
   const panel = panelOf(el);
   if (!panel || !window.ResizeObserver) return null;
-  const ro = new ResizeObserver(() => { fitChart(el, u); persistSize(el); });
+  // A user resize changes the panel box, so refit the plot, remember the size,
+  // and let Packery repack the grid around the new dimensions.
+  const ro = new ResizeObserver(() => { fitChart(el, u); persistSize(el); relayoutSoon(); });
   ro.observe(panel);
   return ro;
+}
+
+// ---- panel reordering + show/hide (Packery + Draggabilly; remembered) -------
+// Packery lays the panels out as a gapless, draggable grid. Each panel is dragged
+// by its grip handle only, so dragging inside a chart still pans time
+// (attachChartInput) and the bottom-right resize handle still resizes.
+let defaultOrder = [];     // panel order as authored in HTML, for Reset layout
+let pckry = null;          // the Packery instance, once initialized
+let relayoutTimer = null;
+const HIDDEN_KEY = "zmn.hidden";
+const panelId = (panel) => { const c = panel.querySelector(".chart"); return c ? c.id : null; };
+const gridEl = () => document.getElementById("grid");
+const allPanels = () => [...gridEl().querySelectorAll(".panel.resizable")];  // includes hidden
+const panelById = (id) => allPanels().find((p) => panelId(p) === id) || null;
+
+function initGrid() {
+  applyHidden();        // mark hidden panels so Packery skips them
+  applySavedOrder();    // reorder the DOM before Packery reads it (pckry still null)
+  pckry = new Packery(gridEl(), {
+    itemSelector: ".panel.resizable:not(.widget-hidden)",
+    columnWidth: ".grid-sizer",
+    gutter: 12,
+    percentPosition: true,
+    transitionDuration: "0.2s",
+  });
+  pckry.on("dragItemPositioned", persistOrder);  // save after every drop
+}
+
+// Make one panel draggable by its grip and let Packery handle the reordering.
+function attachReorder(panel, grip) {
+  if (!pckry || !window.Draggabilly) return;
+  pckry.bindDraggabillyEvents(new Draggabilly(panel, { handle: ".chart-grip" }));
+}
+
+function relayout() { if (pckry) pckry.layout(); }
+// Resizing fires a burst of ResizeObserver events; repacking on each one would move
+// the panel out from under the cursor (runaway resize), so repack once it settles.
+function relayoutSoon() {
+  clearTimeout(relayoutTimer);
+  relayoutTimer = setTimeout(relayout, 150);
+}
+
+// Packery reorders its internal item list on drag but leaves the DOM untouched, so
+// mirror the visual order back into the DOM (hidden panels pushed to the end). This
+// keeps reloadItems() — used by show/hide — from resetting a custom drag order.
+function syncDom() {
+  const grid = gridEl();
+  for (const el of pckry.getItemElements()) grid.appendChild(el);            // visible, visual order
+  for (const p of allPanels()) if (p.classList.contains("widget-hidden")) grid.appendChild(p);
+}
+function persistOrder() {
+  if (!pckry) return;
+  syncDom();
+  localStorage.setItem(ORDER_KEY, JSON.stringify(allPanels().map(panelId).filter(Boolean)));
+}
+function applyOrderList(order) {
+  if (!Array.isArray(order)) return;
+  const grid = gridEl(), byId = {};
+  for (const p of allPanels()) { const id = panelId(p); if (id) byId[id] = p; }
+  for (const id of order) if (byId[id]) grid.appendChild(byId[id]);  // sizer/nav stay put
+  if (pckry) { pckry.reloadItems(); pckry.layout(); }
+}
+function applySavedOrder() {
+  let order = null;
+  try { order = JSON.parse(localStorage.getItem(ORDER_KEY) || "null"); } catch (e) { return; }
+  applyOrderList(order);
+}
+
+// ---- show / hide widgets ----
+function hiddenIds() {
+  try { const a = JSON.parse(localStorage.getItem(HIDDEN_KEY) || "[]"); return Array.isArray(a) ? a : []; }
+  catch (e) { return []; }
+}
+function persistHidden() {
+  localStorage.setItem(HIDDEN_KEY, JSON.stringify(
+    allPanels().filter((p) => p.classList.contains("widget-hidden")).map(panelId).filter(Boolean)));
+}
+function applyHidden() {
+  const set = new Set(hiddenIds());
+  for (const p of allPanels()) p.classList.toggle("widget-hidden", set.has(panelId(p)));
+}
+function setWidget(id, show) {
+  const panel = panelById(id);
+  if (!panel) return;
+  panel.classList.toggle("widget-hidden", !show);
+  persistHidden();
+  if (pckry) { pckry.reloadItems(); pckry.layout(); }
+  if (show && charts[id]) fitChart(charts[id].el, charts[id].u);  // was 0-sized while hidden
+}
+
+function widgetsEl() {
+  let el = $("widgets-pop");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "widgets-pop";
+    document.body.appendChild(el);
+    document.addEventListener("mousedown", (e) => {
+      if (el.style.display !== "none" && !el.contains(e.target) && e.target.id !== "nav-widgets")
+        el.style.display = "none";
+    });
+  }
+  return el;
+}
+function toggleWidgets() {
+  const el = widgetsEl();
+  if (el.style.display === "flex") { el.style.display = "none"; return; }
+  el.innerHTML = "";
+  for (const p of allPanels()) {
+    const id = panelId(p);
+    if (!id) continue;
+    const h2 = p.querySelector("h2");
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !p.classList.contains("widget-hidden");
+    cb.addEventListener("change", () => setWidget(id, cb.checked));
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(" " + (h2 ? h2.textContent.trim() : id)));
+    el.appendChild(label);
+  }
+  const btn = $("nav-widgets").getBoundingClientRect();
+  el.style.display = "flex";
+  el.style.top = (btn.bottom + 6) + "px";
+  el.style.right = Math.max(4, window.innerWidth - btn.right) + "px";
 }
 
 function upsert(elId, labels, data, styler, fmt, extraPlugins, yvalues, override) {
@@ -562,8 +700,9 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins, yvalues, override
   const sc = currentScale(elId);
   if (sc) u.setScale("x", sc);
   fitChart(el, u);  // leave room for the legend
-  attachChartInput(u);
+  attachChartInput(u, elId);
   charts[elId] = { u, key, el, ro: observePanel(el, u) };
+  updateChartNav(elId);  // badge lives in the header (created in setupCollapsibles)
 }
 
 function procAgg(sample, name, field) {
@@ -675,8 +814,8 @@ function updateLiveness() {
   if (!lastRxWall) { text.textContent = "connecting…"; return; }
   const ageSec = (Date.now() - lastRxWall) / 1000;
   const limit = Math.max(3, (meta && meta.interval ? meta.interval : 1) * 3);
-  if (ageSec > limit) { live.className = "stale"; text.textContent = `stale — ${Math.round(ageSec)}s ago`; }
-  else { live.className = ""; text.textContent = "live"; }
+  if (ageSec > limit) { live.className = "stale"; text.textContent = `no data — ${Math.round(ageSec)}s ago`; }
+  else { live.className = ""; text.textContent = "connected"; }
 }
 
 async function poll() {
@@ -696,8 +835,8 @@ async function poll() {
   updateLiveness();
 }
 
-// Chart sizing is handled per-panel by ResizeObserver (observePanel); window
-// resizes change panel widths via flex reflow, which the observers pick up.
+// Chart sizing is handled per-panel by ResizeObserver (observePanel); Packery
+// relayouts on window resize, and the observers refit each plot to its new box.
 function setSidebar(collapsed) {
   document.querySelector(".layout").classList.toggle("sidebar-collapsed", collapsed);
   localStorage.setItem("zmn.sidebar", collapsed ? "collapsed" : "open");
@@ -718,6 +857,19 @@ function setupCollapsibles() {
     btn.className = "chart-collapse";
     btn.title = "Collapse / expand";
     panel.appendChild(btn);
+    // Drag handle to reorder this panel among the charts.
+    const grip = document.createElement("div");
+    grip.className = "chart-grip";
+    grip.title = "Drag to reorder";
+    grip.textContent = "⠿";
+    panel.appendChild(grip);
+    attachReorder(panel, grip);
+    // Per-chart live button: green "live" / red "not live"; click to resume live.
+    const live = document.createElement("button");
+    live.className = "chart-live";
+    live.addEventListener("click", () => { if (id) goLiveChart(id); });
+    panel.appendChild(live);
+    if (id) { liveBadges[id] = live; updateChartNav(id); }
     // Per-chart zoom bar: left = full range, right = max zoom-in. Zooms only this chart.
     const bar = document.createElement("input");
     bar.type = "range"; bar.min = "0"; bar.max = "100"; bar.value = "0";
@@ -736,8 +888,10 @@ function setupCollapsibles() {
       apply(collapsed);
       if (id) localStorage.setItem("zmn.collapsed." + id, collapsed ? "1" : "0");
       if (!collapsed && charts[id]) fitChart(charts[id].el, charts[id].u);  // re-fit on expand
+      relayout();  // height changed — repack the grid
     });
   });
+  relayout();  // account for panels that started collapsed
 }
 
 function resetLayout() {
@@ -752,9 +906,14 @@ function resetLayout() {
     const b = p.querySelector(".chart-collapse");
     if (b) b.textContent = "▾";
   });
-  for (const k in charts) delete chartSpan[k];  // reset per-chart zoom
+  for (const k in charts) { delete chartSpan[k]; chartLive[k] = true; delete chartEdge[k]; }  // reset zoom + go live
   document.querySelectorAll(".zoom-bar").forEach((b) => { b.value = "0"; });
-  goLive();
+  document.querySelectorAll(".panel.widget-hidden").forEach((p) => p.classList.remove("widget-hidden"));
+  localStorage.removeItem(HIDDEN_KEY);            // show every widget again
+  applyOrderList(defaultOrder);                  // restore the authored order + repack
+  localStorage.removeItem(ORDER_KEY);
+  for (const k in charts) fitChart(charts[k].el, charts[k].u);  // refit any just-shown charts
+  applyScale();                                  // re-anchor every chart to live
   setSidebar(false);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
@@ -768,17 +927,14 @@ window.addEventListener("focus", poll);
   $("toggle-legends").checked = showLegends;
   $("toggle-legends").addEventListener("change", (e) => setLegends(e.target.checked));
   $("settings-btn").addEventListener("click", toggleSettings);
-  $("nav-zoomin").addEventListener("click", () => zoomAll(0.6));
-  $("nav-zoomout").addEventListener("click", () => zoomAll(1 / 0.6));
-  $("nav-back").addEventListener("click", () => panBy(-dataSpan() * 0.25));
-  $("nav-fwd").addEventListener("click", () => panBy(dataSpan() * 0.25));
-  $("nav-live").addEventListener("click", goLive);
+  $("nav-widgets").addEventListener("click", toggleWidgets);
   $("nav-clear").addEventListener("click", confirmClear);
   $("conn-collapse").addEventListener("click", () => setSidebar(true));
   $("sidebar-show").addEventListener("click", () => setSidebar(false));
   if (localStorage.getItem("zmn.sidebar") === "collapsed") setSidebar(true);
-  setupCollapsibles();
-  updateNav();
+  defaultOrder = allPanels().map(panelId).filter(Boolean);  // authored order, before any reorder
+  initGrid();          // applies hidden + saved order, then starts Packery
+  setupCollapsibles(); // adds grip/collapse/zoom and binds Draggabilly (needs pckry)
   await poll();
   restartPoll();
   setInterval(updateLiveness, 1000);

@@ -9,6 +9,7 @@
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
+  html { overflow-x: hidden; }  /* never let the page shift sideways (clips titles/axes) */
   /* App shell: fixed header, then a row of [connections sidebar | charts],
      each region scrolls on its own so neither shoves the other. */
   body {
@@ -64,12 +65,10 @@
   #settings-pop #set-err { color: #ff7b72; font-size: 11px; }
   #nav { display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 6px 10px; }
-  #nav-status { color: #8b949e; font-size: 12px; font-variant-numeric: tabular-nums; }
-  .nav-btns { display: flex; gap: 6px; }
+  .nav-btns { display: flex; gap: 6px; align-items: center; }
   .nav-btns button { background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
     border-radius: 6px; padding: 3px 10px; cursor: pointer; font: 600 12px inherit; min-width: 30px; }
   .nav-btns button:hover { background: #30363d; border-color: #8b949e; }
-  #nav-live.active { background: #12361f; color: #56d364; border-color: #1f6f37; }
   #nav-clear { color: #ff7b72; }
   #nav-clear:hover { background: #3d0d11; border-color: #da3633; }
   #clear-pop { position: fixed; z-index: 50; display: none; gap: 10px; align-items: center;
@@ -79,6 +78,12 @@
   #clear-pop button { background: #da3633; color: #fff; border: 1px solid #f85149;
     border-radius: 6px; padding: 3px 12px; cursor: pointer; font: 600 12px inherit; }
   #clear-pop button:hover { background: #f85149; }
+  #widgets-pop { position: fixed; z-index: 50; display: none; flex-direction: column; gap: 6px;
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.6); max-height: 70vh; overflow: auto; }
+  #widgets-pop label { display: flex; align-items: center; gap: 7px; font-size: 12px;
+    color: #c9d1d9; cursor: pointer; white-space: nowrap; }
+  #widgets-pop input { accent-color: #58a6ff; }
 
   /* Connections sidebar: full height of the layout row, scrolls internally. */
   #conn-col { flex: none; width: 440px; display: flex; flex-direction: column;
@@ -102,8 +107,11 @@
   #conn-summary .pill { font-weight: 600; }
   #conn-col .scroll { flex: 1; overflow: auto; min-height: 80px; }
 
-  main { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-wrap: wrap;
-    gap: 12px; align-content: flex-start; align-items: flex-start; }
+  main { flex: 1; overflow-y: auto; padding: 12px; }
+  #nav { margin-bottom: 12px; }
+  /* Packery grid: items are absolutely positioned; the sizer defines one column. */
+  #grid { position: relative; }
+  .grid-sizer { width: calc(50% - 6px); }
   .panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px;
     padding: 8px 10px; min-width: 0; }
   .panel h2 { font-size: 12px; margin: 0; color: #8b949e; font-weight: 600;
@@ -114,14 +122,35 @@
   /* Resizable chart panels: drag the bottom-right corner; the chart fills. */
   .panel.resizable { position: relative; flex: none; display: flex; flex-direction: column;
     resize: both; overflow: hidden; width: calc(50% - 6px); height: 252px;
-    min-width: 280px; min-height: 150px; }
+    min-width: 280px; min-height: 150px; max-width: 100%; }  /* never resize wider than the grid */
   .panel.resizable.wide { width: 100%; }
   .panel.resizable .chart { flex: 1; min-height: 0; }
-  .panel.resizable .panel-head { padding-right: 26px; }  /* clear the collapse button */
+  /* Leave room top-left for the drag grip and top-right for the live button + collapse. */
+  .panel.resizable .panel-head { padding-right: 96px; padding-left: 20px; }
+  .panel.resizable > h2 { padding-left: 20px; padding-right: 96px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chart-collapse { position: absolute; top: 6px; right: 8px; z-index: 5; line-height: 1;
     background: none; border: 1px solid #30363d; color: #8b949e; border-radius: 4px;
     cursor: pointer; font-size: 11px; padding: 1px 6px; }
   .chart-collapse:hover { background: #21262d; color: #c9d1d9; }
+  /* Drag grip: reorders panels. Distinct from the chart canvas (which pans time). */
+  .chart-grip { position: absolute; top: 6px; left: 8px; z-index: 5; line-height: 1;
+    color: #6e7681; cursor: grab; font-size: 13px; padding: 1px 4px; user-select: none;
+    touch-action: none; }
+  .chart-grip:hover { color: #c9d1d9; }
+  .chart-grip:active { cursor: grabbing; }
+  /* Per-chart live button in the panel header (left of the collapse button).
+     Green "live" = following; red "not live" = dragged into the past. */
+  .chart-live { position: absolute; top: 6px; right: 34px; z-index: 6; cursor: pointer;
+    font: 600 10px/1 -apple-system, system-ui, sans-serif; padding: 3px 7px;
+    border-radius: 10px; white-space: nowrap; appearance: none;
+    background: #12361f; color: #56d364; border: 1px solid #1f6f37; }
+  .chart-live:hover { filter: brightness(1.18); }
+  .chart-live.frozen { background: #3d0d11; color: #ff7b72; border-color: #da3633; }
+  /* Draggabilly adds .is-dragging while a panel is being moved; Packery slides the rest. */
+  .panel.is-dragging { z-index: 1000; opacity: .92; cursor: grabbing;
+    border-color: #58a6ff; box-shadow: 0 10px 28px rgba(0,0,0,.55); }
+  .panel.widget-hidden { display: none; }
   .panel.collapsed { height: auto !important; min-height: 0; resize: none; }
   .panel.collapsed .chart, .panel.collapsed .hint, .panel.collapsed .toggle,
   .panel.collapsed .zoom-bar { display: none; }
@@ -169,6 +198,7 @@
     #conn-col { width: auto; border-right: 0; border-bottom: 1px solid #30363d; }
     #conn-col .scroll { max-height: 45vh; }
     main { overflow: visible; }
+    .grid-sizer { width: 100%; }
     .panel.resizable { width: 100%; resize: vertical; }
   }
 
@@ -211,7 +241,7 @@
         <div class="k"><span class="swatch shade"></span><span><b>Red shading</b> CLOSE_WAIT is at or above the alert threshold.</span></div>
         <div class="k"><span class="swatch" style="background:#8b949e"></span><span><b>LISTEN</b> server sockets. <span class="muted">Noise for this bug; hidden by default.</span></span></div>
         <div class="k"><span class="swatch" style="background:#d29922"></span><span><b>Markers</b> click any chart to drop a time-stamped note; click a marker to edit or delete it. <span class="muted">Notes are included in the export.</span></span></div>
-        <div class="k"><span class="swatch" style="background:#8b949e"></span><span><b>Navigate</b> wheel to zoom, drag to pan, or use the toolbar; double-click a chart for live. <span class="muted">All charts stay time-synced.</span></span></div>
+        <div class="k"><span class="swatch" style="background:#8b949e"></span><span><b>Navigate</b> each chart is independent: drag inside it to go back through its history, double-click (or click its live badge) to resume live, and use the bar under it to zoom. Drag the <b>&#x283F;</b> handle to reorder; use <b>Widgets</b> to hide/show charts.</span></div>
       </div>
     </details>
     <div id="conn-head">
@@ -233,18 +263,16 @@
   </aside>
   <main>
   <section id="nav" class="panel wide">
-    <span id="nav-status">Live &mdash; following</span>
+    <span class="meta" id="nav-hint">Drag inside a chart to go back in time &middot; double-click (or its live badge) to resume live</span>
     <span class="nav-btns">
       <label class="toggle"><input type="checkbox" id="toggle-legends"> legends</label>
-      <button id="nav-zoomin" title="Zoom in">+</button>
-      <button id="nav-zoomout" title="Zoom out">&minus;</button>
-      <button id="nav-back" title="Back in time">&#9664;</button>
-      <button id="nav-fwd" title="Forward in time">&#9654;</button>
-      <button id="nav-live" title="Resume live (or double-click a chart)">Live</button>
+      <button id="nav-widgets" title="Show / hide charts">Widgets</button>
       <button id="nav-clear" title="Clear graphs &amp; markers">Clear</button>
     </span>
   </section>
-  <section class="panel wide resizable">
+  <div id="grid">
+  <div class="grid-sizer"></div>
+  <section class="panel resizable">
     <div class="panel-head">
       <div>
         <h2>TCP connection states</h2>
@@ -285,19 +313,22 @@
     <div class="hint">Linux only. Open fds as a percentage of each process's limit; approaching 100% is failure.</div>
     <div class="chart" id="chart-fdpct"></div>
   </section>
-  <section class="panel wide resizable">
+  <section class="panel resizable">
     <h2>Totals across matched processes</h2>
     <div class="hint">Sum of fds and sockets (left) and RSS in MB (right axis) over all matched processes.</div>
     <div class="chart" id="chart-total"></div>
   </section>
-  <section class="panel wide resizable">
+  <section class="panel resizable">
     <h2>Connection churn (per sample)</h2>
     <div class="hint">New vs closed sockets each sample. Opens without matching closes is the leak.</div>
     <div class="chart" id="chart-churn"></div>
   </section>
+  </div>
   </main>
 </div>
 <script src="/static/uPlot.iife.min.js"></script>
+<script src="/static/packery.pkgd.min.js"></script>
+<script src="/static/draggabilly.pkgd.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
