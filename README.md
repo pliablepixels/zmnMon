@@ -13,6 +13,8 @@ table of the current connections.
 - **No root needed** for your own processes (root is only required for `--sniff`).
 - **Cross-platform** — Linux samples via `ss` / `ps` / `/proc`; macOS via `lsof` / `ps`.
 
+![zmnMon dashboard](screenshots/1.png)
+
 ## Requirements
 
 - Python 3.8+
