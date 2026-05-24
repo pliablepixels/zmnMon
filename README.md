@@ -24,7 +24,7 @@ table of the current connections.
 
 ## Running
 
-``bash
+```bash
 ./start.sh <IP of ZM>
 ```
 
