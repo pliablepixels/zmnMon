@@ -121,30 +121,50 @@ function markerPlugin() {
     hooks: {
       draw: (u) => {
         if (!markers.length) return;
+        // uPlot draw hooks work in device pixels, so scale strokes/font by the
+        // pixel ratio or the label renders tiny on HiDPI screens.
+        const dpr = (typeof uPlot !== "undefined" && uPlot.pxRatio) || window.devicePixelRatio || 1;
         const ctx = u.ctx, top = u.bbox.top, h = u.bbox.height;
         const x0 = u.bbox.left, x1 = u.bbox.left + u.bbox.width;
         ctx.save();
         ctx.strokeStyle = MARKER_COLOR;
         ctx.fillStyle = MARKER_COLOR;
-        ctx.lineWidth = 1;
-        ctx.font = "10px -apple-system, system-ui, sans-serif";
+        ctx.lineWidth = dpr;
+        ctx.font = `600 ${12 * dpr}px -apple-system, system-ui, sans-serif`;
         ctx.textBaseline = "top";
         for (const m of markers) {
           const x = u.valToPos(m.ts, "x", true);
           if (x < x0 || x > x1) continue;
-          ctx.setLineDash([4, 3]);
+          ctx.setLineDash([4 * dpr, 3 * dpr]);
           ctx.beginPath();
           ctx.moveTo(x, top);
           ctx.lineTo(x, top + h);
           ctx.stroke();
           ctx.setLineDash([]);
           const label = m.text.length > 18 ? m.text.slice(0, 17) + "…" : m.text;
-          ctx.fillText(label, x + 3, top + 2);
+          ctx.fillText(label, x + 4 * dpr, top + 3 * dpr);
         }
         ctx.restore();
       },
     },
   };
+}
+
+// uPlot's legend marker is just an outlined box (we set stroke, not fill). Fill it
+// with the series colour when the series is shown, leave it as an outline when the
+// series is toggled off — so the legend reflects what's currently drawn.
+function legendMarkerPlugin() {
+  const restyle = (u) => {
+    const markers = u.root.querySelectorAll(".u-legend .u-marker");  // markers[0] = x series; markers[i] = series[i]
+    for (let i = 1; i < u.series.length; i++) {
+      const marker = markers[i];
+      if (!marker) continue;
+      const s = u.series[i];
+      const stroke = typeof s.stroke === "function" ? s.stroke(u, i) : s.stroke;
+      marker.style.background = s.show ? stroke : "transparent";
+    }
+  };
+  return { hooks: { ready: restyle, setSeries: restyle } };
 }
 
 // Chart input: plain click = marker (add on empty, edit/delete on a line),
@@ -692,7 +712,7 @@ function upsert(elId, labels, data, styler, fmt, extraPlugins, yvalues, override
     scales: (override && override.scales) || { x: { time: true } },
     legend: { show: true, live: true },
     cursor: { drag: { x: false, y: false }, focus: { prox: 30 }, points: { size: 6 } },
-    plugins: [tooltipPlugin(fmt), markerPlugin(), ...(extraPlugins || [])],
+    plugins: [tooltipPlugin(fmt), markerPlugin(), legendMarkerPlugin(), ...(extraPlugins || [])],
     axes: (override && override.axes) || [axisX(), axisY(yvalues)],
     series: [{ label: "time" }, ...labels.map((l, i) => styler(l, i))],
   };

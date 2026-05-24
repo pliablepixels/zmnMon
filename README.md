@@ -22,16 +22,14 @@ table of the current connections.
 
 ## Running
 
-Run as the same user that owns the app you want to watch, then open the printed URL:
-
-```bash
-python3 zmnmon.py --proc 'my-app' --peer 192.168.183.250
+``bash
+./start.sh <IP of ZM>
 ```
+
+This will start zmnMon tracking zmNinjaNg connections (to <IP of ZM>  and memory stats)
 
 Then visit the dashboard at <http://127.0.0.1:8787/>.
 
-`--peer` filters the peer-only charts and the connection table to that remote
-host. You can run without it to monitor all matched processes.
 
 ### Options
 
